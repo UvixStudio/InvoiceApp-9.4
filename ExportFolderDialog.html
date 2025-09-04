@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial; padding: 10px; }
+    input[type="text"] { width: 100%; padding: 8px; margin-top: 10px; }
+    button { margin-top: 10px; padding: 8px 12px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+    .result { margin-top: 10px; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <p>הכנס לינק לתיקייה שלך ב-Google Drive:</p>
+  <input type="text" id="folderUrl" placeholder="https://drive.google.com/drive/folders/... " />
+
+  <button onclick="extractId()">Generate ID</button>
+
+  <div class="result" id="output"></div>
+  <button onclick="copyId()">העתק ID</button>
+  <button onclick="saveToSettings()">שמור ID ל-Settings</button>
+
+  <script>
+    function extractIdFromUrl(url) {
+      const regex = /folders\/([a-zA-Z0-9_-]+)/;
+      const match = url.match(regex);
+      return match ? match[1] : null;
+    }
+
+    function extractId() {
+      const url = document.getElementById("folderUrl").value;
+      const id = extractIdFromUrl(url);
+
+      if (id) {
+        document.getElementById("output").innerText = "✅ ה-ID של התיקייה: " + id;
+      } else {
+        document.getElementById("output").innerText = "❌ לא נמצא ID בתוכן הלינק.";
+      }
+    }
+
+    function copyId() {
+      const text = document.getElementById("output").innerText.replace("✅ ה-ID של התיקייה: ", "");
+      const tempInput = document.createElement("textarea");
+      tempInput.value = text;
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      document.execCommand("copy");
+      document.body.removeChild(tempInput);
+      alert("ה-ID הועתק בהצלחה!");
+    }
+
+    function saveToSettings() {
+      const text = document.getElementById("output").innerText.replace("✅ ה-ID של התיקייה: ", "");
+      if (!text) {
+        alert("❌ לא נמצא ID להעברה.");
+        return;
+      }
+
+      // שליחת ה-ID לגיליון Settings
+      google.script.run.withSuccessHandler(() => {
+        alert("✅ ה-ID נשמר בהגדרות!");
+      }).saveFolderId(text);
+    }
+  </script>
+
+</body>
+</html>
