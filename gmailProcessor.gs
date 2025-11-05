@@ -1,5 +1,16 @@
 // === GmailProcessor.gs - סריקה חדשה ופועלת ===
 
+// === HELPER: Check Drive Permissions ===
+function checkDrivePermissions() {
+  try {
+    // ניסיון פשוט לגשת ל-Drive
+    DriveApp.getRootFolder();
+    return { success: true, message: "הרשאות Drive תקינות" };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+}
+
 // === MAIN SCAN FUNCTION ===
 function processInvoices() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -9,7 +20,8 @@ function processInvoices() {
   if (!settings) throw new Error('Settings sheet not found.');
   if (!log) throw new Error('Log sheet not found.');
   
-  _logMessage(log, "🚀 התחלת סריקת חשבוניות", 'INFO');
+  const startTime = new Date();
+  _logMessage(log, `🔍 התחלת סריקת חשבוניות - ${startTime.toLocaleString('he-IL')}`, 'INFO');
   
   try {
     // בדיקת הרשאות
@@ -25,6 +37,9 @@ function processInvoices() {
     // קריאת הגדרות
     const config = readScanSettings(settings, log);
     if (!config) return;
+    
+    // הודעת לוג מפורטת על טווח התאריכים
+    _logMessage(log, `📅 סורק מיילים מ-${formatDateInput(config.startDate)} עד ${formatDateInput(config.endDate)}`, 'INFO');
 
     // יצירת/עדכון גיליון תוצאות
     const sheet = createOrUpdateResultsSheet(ss, config.tabName, log);
@@ -163,9 +178,9 @@ function createOrUpdateResultsSheet(ss, tabName, log) {
                  .setFontColor("white")
                  .setHorizontalAlignment("center");
       
-      // הוספת צ'קבוקסים
-      const checkboxRange = sheet.getRange("A2:A1000");
-      checkboxRange.insertCheckboxes();
+      // צ'קבוקסים יתווספו אחרי כתיבת הנתונים
+      // const checkboxRange = sheet.getRange("A2:A1000"); // הוסר - גורם לבעיית שורה 1000
+      // checkboxRange.insertCheckboxes();
       
       // הוספת validation לקטגוריה
       const categoryRange = sheet.getRange("B2:B1000");
@@ -176,11 +191,22 @@ function createOrUpdateResultsSheet(ss, tabName, log) {
       );
       
       sheet.setFrozenRows(1);
+      
+      // הסתרת עמודת Action (נשלט דרך התפריט)
+      sheet.hideColumns(1, 1); // מסתיר עמודה A
+      
       SpreadsheetApp.flush();
       
       _logMessage(log, "✅ גיליון תוצאות נוצר בהצלחה", 'SUCCESS');
     } else {
       _logMessage(log, `📋 משתמש בגיליון קיים: ${tabName}`, 'INFO');
+      
+      // ניקוי צ'קבוקסים ישנים שגורמים לבעיית שורה 1000
+      try {
+        cleanupOldCheckboxes(sheet, log);
+      } catch (e) {
+        _logMessage(log, `⚠️ שגיאה בניקוי צ'קבוקסים ישנים: ${e.message}`, 'WARNING');
+      }
     }
     
     return sheet;
@@ -195,11 +221,13 @@ function performGmailScan(config, log) {
   try {
     // בניית שאילתת חיפוש
     const query = buildGmailQuery(config);
-    _logMessage(log, `🔍 שאילתת Gmail: ${query}`, 'INFO');
+    // לוג השאילתה בשורות נפרדות לקריאות טובה יותר
+    _logMessage(log, `שאילתת Gmail:`, 'INFO');
+    _logMessage(log, `${query}`, 'INFO');
     
     // חיפוש מיילים
     const threads = GmailApp.search(query, 0, 500); // מקסימום 500 מיילים
-    _logMessage(log, `📧 נמצאו ${threads.length} שרשורי מייל`, 'INFO');
+    _logMessage(log, `📧 נמצאו ${threads.length} שרשורי מייל שעברו סינון ראשוני`, 'INFO');
     
     if (threads.length === 0) {
       return { emails: [], skipped: [] };
@@ -233,43 +261,38 @@ function performGmailScan(config, log) {
 }
 
 // === GMAIL QUERY BUILDER ===
+// Based on KiroAI Invoice Scanner Methodology (04.11.2025)
 function buildGmailQuery(config) {
   const parts = [];
   
-  // טווח תאריכים
+  // טווח תאריכים - חובה
   parts.push(`after:${formatDateGmail(config.startDate)}`);
   parts.push(`before:${formatDateGmail(config.endDate)}`);
   
-  // קבצים מצורפים
+  // רק קבצי PDF מצורפים - חובה
   parts.push("has:attachment");
+  parts.push("filename:pdf");
   
-  // מילות מפתח או שולחים מאושרים
-  const keywordParts = [];
+  // חריגת צ'אטים ושרשורים
+  parts.push("-is:chat");
+  parts.push("-in:chats");
+  parts.push("-is:muted");
+  parts.push('-subject:(re: OR fwd: OR fw: OR "תשובה" OR "העברה")');
   
-  // מילות מפתח
-  const allKeywords = [...config.enKeywords, ...config.heKeywords];
+  // מילות חיפוש רק בנושא (subject) - OR ביניהן
+  const allKeywords = [...config.enKeywords, ...config.heKeywords].filter(k => k && k.trim());
   if (allKeywords.length > 0) {
-    keywordParts.push(`(${allKeywords.map(k => `"${k}"`).join(" OR ")})`);
+    const keywordQuery = allKeywords.map(k => k.trim()).join(" OR ");
+    parts.push(`subject:(${keywordQuery})`);
+  } else {
+    // אם אין מילות מפתח בסטינגס - תן שגיאה ברורה
+    throw new Error('❌ לא הוגדרו מילות חיפוש בטאב Settings! אנא הוסף מילות חיפוש בעמודות C ו-D');
   }
   
-  // שולחים מאושרים
-  if (config.approvedSenders.length > 0) {
-    keywordParts.push(`(${config.approvedSenders.map(s => `from:${s}`).join(" OR ")})`);
-  }
-  
-  if (keywordParts.length > 0) {
-    parts.push(`(${keywordParts.join(" OR ")})`);
-  }
-  
-  // הוצאת דומיינים פרטיים
-  const privateDomains = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "walla.co.il"];
-  for (const domain of privateDomains) {
-    parts.push(`-from:${domain}`);
-  }
-  
-  // הוצאת מילים מוחרגות
-  for (const word of config.excludedKeywords) {
-    parts.push(`-"${word}"`);
+  // חריגת מיילים מוחרגים
+  if (config.excludedEmails && config.excludedEmails.length > 0) {
+    const excludedQuery = config.excludedEmails.map(email => `-from:${email.trim()}`).join(" ");
+    parts.push(excludedQuery);
   }
   
   return parts.join(" ");
@@ -322,6 +345,10 @@ function processEmails(emails, config, sheet, log) {
   
   _logMessage(log, `🔄 מתחיל עיבוד ${emails.length} מיילים`, 'INFO');
   
+  // הודעה על מיקום כתיבת הרשומות
+  const startingRow = findLastRowWithData(sheet) + 1;
+  _logMessage(log, `📝 רשומות חדשות יתחילו משורה ${startingRow}`, 'INFO');
+  
   for (let i = 0; i < emails.length; i++) {
     const emailData = emails[i];
     
@@ -340,38 +367,23 @@ function processEmails(emails, config, sheet, log) {
         continue;
       }
       
-      // בדיקת סינונים
-      if (shouldSkipEmail(emailData, config)) {
-        skipped++;
-        continue;
-      }
+      // השאילתה כבר עשתה את כל הסינון - אנחנו רק כותבים
+      // אין סינון נוסף בשלב זה
+      _logMessage(log, `✅ מתקבל: ${emailData.email} - "${emailData.subject}"`, 'SUCCESS');
       
-      // יצירת רשומה
-      const record = createInvoiceRecord(emailData, config);
-      if (record) {
-        // לוג לפני כתיבה
-        _logMessage(log, `📝 כותב רשומה: ${JSON.stringify(record).substring(0, 100)}...`, 'INFO');
+      // יצירת רשומה - בלי בדיקות, הכל נכנס
+      try {
+        const record = createInvoiceRecord(emailData, config);
         
-        // הוספה לגיליון
-        sheet.appendRow(record);
+        // מציאת השורה הבאה לכתיבה
+        const nextRow = findLastRowWithData(sheet) + 1;
         
-        // בדיקה מיידית אחרי כתיבה
+        // כתיבה בשורה ספציפית
+        sheet.getRange(nextRow, 1, 1, record.length).setValues([record]);
+        
         SpreadsheetApp.flush();
-        const rowNum = sheet.getLastRow();
-        const writtenData = sheet.getRange(rowNum, 1, 1, record.length).getValues()[0];
-        _logMessage(log, `📋 נכתב בפועל: ${JSON.stringify(writtenData).substring(0, 100)}...`, 'INFO');
         
-        // עיצוב השורה
-        try {
-          formatInvoiceRow(sheet, rowNum, record[1]); // record[1] is category
-          _logMessage(log, `🎨 עיצוב הושלם לשורה ${rowNum}`, 'INFO');
-          
-          // בדיקה נוספת אחרי עיצוב
-          const afterFormatData = sheet.getRange(rowNum, 1, 1, record.length).getValues()[0];
-          _logMessage(log, `📋 אחרי עיצוב: ${JSON.stringify(afterFormatData).substring(0, 100)}...`, 'INFO');
-        } catch (formatError) {
-          _logMessage(log, `❌ שגיאה בעיצוב שורה ${rowNum}: ${formatError.message}`, 'ERROR');
-        }
+        _logMessage(log, `✅ נוסף: ${emailData.email} - שורה ${nextRow}`, 'SUCCESS');
         
         inserted++;
         existingRecords.set(emailData.messageId, true);
@@ -380,7 +392,8 @@ function processEmails(emails, config, sheet, log) {
         if (inserted % 20 === 0) {
           SpreadsheetApp.flush();
         }
-      } else {
+      } catch (recordError) {
+        _logMessage(log, `❌ שגיאה ביצירת רשומה: ${emailData.email} - ${recordError.message}`, 'ERROR');
         skipped++;
       }
       
@@ -393,6 +406,20 @@ function processEmails(emails, config, sheet, log) {
   // Flush סופי
   SpreadsheetApp.flush();
   
+  // הוספת צ'קבוקסים רק לשורות שנכתבו בפועל
+  if (inserted > 0) {
+    try {
+      // מציאת השורה האחרונה עם נתונים אמיתיים
+      const lastRowWithData = findLastRowWithData(sheet);
+      const startRow = lastRowWithData - inserted + 1; // השורה הראשונה של הרשומות החדשות
+      
+      sheet.getRange(startRow, 1, inserted, 1).insertCheckboxes();
+      _logMessage(log, `✅ צ'קבוקסים נוצרו לשורות ${startRow}-${lastRowWithData} (${inserted} רשומות)`, 'SUCCESS');
+    } catch (e) {
+      _logMessage(log, `⚠️ שגיאה ביצירת צ'קבוקסים: ${e.message}`, 'WARNING');
+    }
+  }
+  
   _logMessage(log, `📊 תוצאות עיבוד: ${inserted} נוספו, ${skipped} דולגו, ${duplicates} כפילויות`, 'SUCCESS');
   
   return { inserted, skipped, duplicates, total: emails.length };
@@ -403,8 +430,11 @@ function getExistingRecords(sheet) {
   const existingRecords = new Map();
   
   try {
-    if (sheet.getLastRow() > 1) {
-      const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+    // מציאת השורה האחרונה עם נתונים אמיתיים (לא רק צ'קבוקסים)
+    const lastRowWithData = findLastRowWithData(sheet);
+    
+    if (lastRowWithData > 1) {
+      const data = sheet.getRange(2, 1, lastRowWithData - 1, sheet.getLastColumn()).getValues();
       
       for (const row of data) {
         const messageId = row[7]; // Email ID column
@@ -420,56 +450,83 @@ function getExistingRecords(sheet) {
   return existingRecords;
 }
 
-// === EMAIL FILTER ===
-function shouldSkipEmail(emailData, config) {
+// פונקציה למציאת השורה האחרונה עם נתונים אמיתיים
+function findLastRowWithData(sheet) {
+  const maxRows = sheet.getLastRow();
+  
+  // בדיקה מלמטה למעלה לשורה עם נתונים בעמודת Email ID (עמודה H)
+  for (let row = maxRows; row >= 2; row--) {
+    const emailId = sheet.getRange(row, 8).getValue(); // עמודה H = Email ID
+    if (emailId && emailId.toString().trim() !== '') {
+      return row;
+    }
+  }
+  
+  return 1; // אם לא נמצאו נתונים, החזר 1 (רק כותרות)
+}
+
+// פונקציה לניקוי צ'קבוקסים ישנים
+function cleanupOldCheckboxes(sheet, log) {
+  const lastRowWithData = findLastRowWithData(sheet);
+  const maxRows = sheet.getLastRow();
+  
+  _logMessage(log, `🔍 בדיקת ניקוי: נתונים עד שורה ${lastRowWithData}, גיליון עד שורה ${maxRows}`, 'INFO');
+  
+  // אם יש צ'קבוקסים מיותרים (מעבר לנתונים האמיתיים)
+  if (maxRows > lastRowWithData + 5) { // השארת מרווח של 5 שורות בלבד
+    _logMessage(log, `🧹 מנקה צ'קבוקסים ישנים משורה ${lastRowWithData + 1} עד ${maxRows}`, 'INFO');
+    
+    try {
+      // הסרת צ'קבוקסים מיותרים
+      const rangeToClean = sheet.getRange(lastRowWithData + 1, 1, maxRows - lastRowWithData, 1);
+      rangeToClean.removeCheckboxes();
+      
+      // ניקוי תוכן השורות המיותרות
+      rangeToClean.clearContent();
+      
+      _logMessage(log, `✅ צ'קבוקסים ישנים נוקו בהצלחה`, 'SUCCESS');
+    } catch (e) {
+      _logMessage(log, `⚠️ שגיאה בניקוי צ'קבוקסים: ${e.message}`, 'WARNING');
+    }
+  } else {
+    _logMessage(log, `✅ אין צורך בניקוי - הגיליון נקי`, 'SUCCESS');
+  }
+}
+
+// === EMAIL FILTER WITH DETAILED REASONS ===
+function getSkipReason(emailData, config) {
   const email = emailData.email.toLowerCase();
   const subject = emailData.subject.toLowerCase();
-  const body = emailData.body.toLowerCase();
   
-  // בדיקת מיילים מוחרגים
-  if (config.excludedEmails.some(excluded => email.includes(excluded))) {
-    return true;
+  // רק בדיקות בסיסיות - השאילתה כבר עשתה את העבודה הכבדה
+  
+  // בדיקת מיילים מוחרגים מפורשים
+  const excludedEmail = config.excludedEmails.find(excluded => email.includes(excluded));
+  if (excludedEmail) {
+    return `מייל מוחרג: ${excludedEmail}`;
   }
   
-  // בדיקת מילים מוחרגות
-  if (config.excludedKeywords.some(word => subject.includes(word) || body.includes(word))) {
-    return true;
+  // בדיקת מילים מוחרגות בנושא בלבד
+  const excludedWord = config.excludedKeywords.find(word => subject.includes(word));
+  if (excludedWord) {
+    return `מילה מוחרגת: "${excludedWord}"`;
   }
   
-  // דילוג על הזמנות קלנדר
+  // דילוג על הזמנות קלנדר ברורות
   if (subject.includes('invitation:') || subject.includes('invite') || 
       subject.includes('meeting') || subject.includes('calendar')) {
-    return true;
+    return 'הזמנת קלנדר';
   }
   
-  // דילוג על קבצי .ics (קלנדר)
-  if (emailData.attachments && emailData.attachments.some(att => 
-      att.getName().toLowerCase().endsWith('.ics') || 
-      att.getContentType().toLowerCase().includes('calendar'))) {
-    return true;
-  }
+  // השאילתה כבר סיננה subject: ו-filename:pdf
+  // אז אנחנו מאשרים כמעט הכל שהגיע עד כאן
   
-  // בדיקת דומיינים פרטיים (אלא אם כן מאושר)
-  if (isPrivateEmail(email) && !config.approvedSenders.some(approved => email.includes(approved))) {
-    return true;
-  }
-  
-  // בדיקה שיש מילות מפתח רלוונטיות
-  const allKeywords = [...(config.enKeywords || []), ...(config.heKeywords || [])];
-  const hasRelevantKeywords = allKeywords.some(keyword => 
-    subject.includes(keyword.toLowerCase()) || body.includes(keyword.toLowerCase())
-  );
-  
-  if (!hasRelevantKeywords && !config.approvedSenders.some(approved => email.includes(approved))) {
-    return true;
-  }
-  
-  // בדיקה שיש PDF או קישור חשבונית
-  if (!emailData.pdfAttachment && !hasInvoiceLink(emailData)) {
-    return true;
-  }
-  
-  return false;
+  return null; // לא דולג - מאשר את המייל
+}
+
+// === EMAIL FILTER (LEGACY COMPATIBILITY) ===
+function shouldSkipEmail(emailData, config) {
+  return getSkipReason(emailData, config) !== null;
 }
 
 // === PRIVATE EMAIL CHECKER ===
@@ -493,61 +550,40 @@ function hasInvoiceLink(emailData) {
 
 // === RECORD CREATOR ===
 function createInvoiceRecord(emailData, config) {
-  try {
-    console.log(`🔍 Creating invoice record for email: ${emailData.email}`);
-    const isLocal = isLocalEmail(emailData.email, emailData.subject, emailData.body);
-    const category = isLocal ? "🔷 Local" : "🌐 International";
+  // פשוט יוצר רשומה - בלי בדיקות, בלי try-catch שמחזיר null
+  const isLocal = isLocalEmail(emailData.email, emailData.subject, emailData.body);
+  const category = isLocal ? "🔷 Local" : "🌐 International";
 
-    const amountData = extractAmountAndCurrency(emailData.subject, emailData.body);
-    let localAmount = "";
-    let intlAmount = "";
-    let currency = "";
+  let pdfLink = "";
+  let attachmentName = "";
 
-    if (amountData) {
-      currency = amountData.currency || "";
-      if (isLocal || amountData.currency === "ILS") {
-        localAmount = amountData.amount;
-      } else {
-        intlAmount = amountData.amount;
-      }
+  if (emailData.pdfAttachment) {
+    attachmentName = emailData.pdfAttachment.getName();
+    try {
+      const blob = emailData.pdfAttachment.getBlob();
+      const file = DriveApp.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      pdfLink = file.getUrl();
+    } catch (e) {
+      // אם העלאה נכשלת, נשאיר ריק
+      pdfLink = "";
     }
-
-    let pdfLink = "";
-    let attachmentName = "";
-
-    if (emailData.pdfAttachment) {
-      attachmentName = emailData.pdfAttachment.getName();
-      console.log(`🔍 Found PDF attachment: ${attachmentName}`);
-      try {
-        const blob = emailData.pdfAttachment.getBlob();
-        const file = DriveApp.createFile(blob);
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        pdfLink = file.getUrl();
-        console.log(`✅ Uploaded to Drive: ${pdfLink}`);
-      } catch (e) {
-        console.error(`❌ Error uploading to Drive: ${e.message}`);
-      }
-    } else {
-      pdfLink = extractInvoiceLinkFromHtml(emailData.htmlBody) || 
-                extractInvoiceLinkFromPlainText(emailData.body);
-      console.log(`🔍 Extracted link: ${pdfLink}`);
-    }
-
-    return [
-      false,                                    // Action (checkbox)
-      category,                                 // Category
-      emailData.senderName,                     // Sender Name
-      emailData.email,                          // Sender Email
-      formatDateInput(emailData.date),          // Date
-      emailData.subject,                        // Subject
-      pdfLink,                                  // PDF Link
-      emailData.messageId,                      // Email ID
-      attachmentName                            // Attachment Name
-    ];
-  } catch (e) {
-    console.error(`❌ Error creating invoice record: ${e.message}`);
-    return null;
+  } else {
+    pdfLink = extractInvoiceLinkFromHtml(emailData.htmlBody) || 
+              extractInvoiceLinkFromPlainText(emailData.body) || "";
   }
+
+  return [
+    false,                                    // Action (checkbox)
+    category,                                 // Category
+    emailData.senderName || "",               // Sender Name
+    emailData.email || "",                    // Sender Email
+    formatDateInput(emailData.date),          // Date
+    emailData.subject || "",                  // Subject
+    pdfLink,                                  // PDF Link
+    emailData.messageId || "",                // Email ID
+    attachmentName                            // Attachment Name
+  ];
 }
 
 // === ROW FORMATTER ===

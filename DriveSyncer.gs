@@ -229,24 +229,51 @@ function createUniqueFileName(senderName, subject, date, category) {
  */
 function syncInvoiceFile(pdfLink, fileName, targetFolder, log) {
   try {
-    if (pdfLink.startsWith('PDF:')) {
-      // זה PDF מצורף - כרגע לא נוכל להוריד אותו ישירות
-      // נוצר קובץ טקסט עם המידע
-      const textContent = `Invoice PDF: ${pdfLink}\nFile would be: ${fileName}`;
-      const textBlob = Utilities.newBlob(textContent, 'text/plain', fileName.replace('.pdf', '.txt'));
-      targetFolder.createFile(textBlob);
-      return true;
-    } else if (pdfLink.startsWith('http')) {
-      // זה קישור - ננסה להוריד
+    if (!pdfLink || !pdfLink.trim()) {
+      return false;
+    }
+    
+    // בדיקה אם זה קישור Google Drive
+    if (pdfLink.includes('drive.google.com')) {
       try {
-        const response = UrlFetchApp.fetch(pdfLink);
-        const blob = response.getBlob();
-        blob.setName(fileName);
-        targetFolder.createFile(blob);
-        return true;
+        // חילוץ מזהה הקובץ מהקישור
+        const fileId = extractDriveFileId(pdfLink);
+        if (fileId) {
+          // העתקת הקובץ מ-Drive
+          const sourceFile = DriveApp.getFileById(fileId);
+          const copiedFile = sourceFile.makeCopy(fileName, targetFolder);
+          _logMessage(log, `✅ הועתק מ-Drive: ${fileName}`, 'SUCCESS');
+          return true;
+        }
+      } catch (driveError) {
+        _logMessage(log, `⚠️ שגיאה בהעתקה מ-Drive: ${driveError.message}`, 'WARNING');
+      }
+    }
+    
+    // אם זה קישור HTTP רגיל - ננסה להוריד
+    if (pdfLink.startsWith('http')) {
+      try {
+        const response = UrlFetchApp.fetch(pdfLink, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          },
+          muteHttpExceptions: true
+        });
+        
+        if (response.getResponseCode() === 200) {
+          const blob = response.getBlob();
+          blob.setName(fileName);
+          targetFolder.createFile(blob);
+          _logMessage(log, `✅ הורד מהאינטרנט: ${fileName}`, 'SUCCESS');
+          return true;
+        } else {
+          throw new Error(`HTTP ${response.getResponseCode()}`);
+        }
       } catch (fetchError) {
-        // אם ההורדה נכשלה, נוצר קובץ טקסט עם הקישור
-        const textContent = `Invoice Link: ${pdfLink}\nFailed to download: ${fetchError.message}`;
+        _logMessage(log, `⚠️ שגיאה בהורדה: ${fetchError.message}`, 'WARNING');
+        
+        // יצירת קובץ טקסט עם הקישור כגיבוי
+        const textContent = `Invoice Link: ${pdfLink}\nDownload failed: ${fetchError.message}\nDate: ${new Date().toISOString()}`;
         const textBlob = Utilities.newBlob(textContent, 'text/plain', fileName.replace('.pdf', '_link.txt'));
         targetFolder.createFile(textBlob);
         return true;
@@ -257,6 +284,30 @@ function syncInvoiceFile(pdfLink, fileName, targetFolder, log) {
   } catch (error) {
     _logMessage(log, `❌ שגיאה בסנכרון קובץ ${fileName}: ${error.message}`, 'ERROR');
     return false;
+  }
+}
+
+// פונקציה לחילוץ מזהה קובץ מקישור Google Drive
+function extractDriveFileId(driveUrl) {
+  try {
+    // דפוסים שונים של קישורי Google Drive
+    const patterns = [
+      /\/file\/d\/([a-zA-Z0-9-_]+)/,
+      /id=([a-zA-Z0-9-_]+)/,
+      /\/d\/([a-zA-Z0-9-_]+)/
+    ];
+    
+    for (const pattern of patterns) {
+      const match = driveUrl.match(pattern);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error extracting Drive file ID: ${error.message}`);
+    return null;
   }
 }
 
@@ -274,6 +325,39 @@ function sanitizeFileName(fileName) {
 }
 
 /**
+ * בדיקה מהירה של הגדרות הסנכרון
+ */
+function checkSyncSettings() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const settings = ss.getSheetByName(SETTINGS_SHEET_NAME);
+  
+  if (!settings) {
+    SpreadsheetApp.getUi().alert("❌ גיליון Settings לא נמצא");
+    return;
+  }
+  
+  const folderId = settings.getRange("I2").getValue();
+  
+  if (!folderId) {
+    SpreadsheetApp.getUi().alert("❌ לא הוגדרה תיקיית יעד\n\nאנא הכנס מזהה תיקיית Google Drive בתא I2 בגיליון Settings");
+    return;
+  }
+  
+  try {
+    const targetFolder = DriveApp.getFolderById(folderId);
+    const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
+    
+    SpreadsheetApp.getUi().alert(
+      "✅ הגדרות סנכרון תקינות",
+      `תיקיית היעד: ${targetFolder.getName()}\n\nקישור: ${folderUrl}\n\nהסנכרון מוכן לשימוש!`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (e) {
+    SpreadsheetApp.getUi().alert("❌ שגיאה בגישה לתיקייה\n\nבדוק שמזהה התיקייה נכון ושיש לך הרשאות גישה");
+  }
+}
+
+/**
  * הצגת תוצאות הסנכרון
  */
 function showSyncResults(results) {
@@ -286,7 +370,7 @@ function showSyncResults(results) {
 • ${results.totalSkipped} קבצים דולגו (כבר קיימים)
 • ${results.totalErrors} שגיאות
 
-${results.totalSynced > 0 ? '🎉 הקבצים זמינים בתיקיית Google Drive!' : ⚠️ לא נוספו קבצים חדשים.'}`;
+${results.totalSynced > 0 ? '🎉 הקבצים זמינים בתיקיית Google Drive!' : '⚠️ לא נוספו קבצים חדשים.'}`;
 
   SpreadsheetApp.getUi().alert("סיכום סנכרון", message, SpreadsheetApp.getUi().ButtonSet.OK);
   

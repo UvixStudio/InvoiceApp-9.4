@@ -10,6 +10,12 @@ function processInvoicesGmailApi() {
     return;
   }
 
+  // תיעוד תחילת סריקה
+  _logMessage("🚀 התחלת סריקת חשבוניות (Gmail API Advanced)");
+  _logMessage(`📅 זמן התחלה: ${new Date().toLocaleString('he-IL')}`);
+  
+  const startTime = new Date();
+
   const startStr = settings.getRange("A2").getValue();
   const endStr = settings.getRange("B2").getValue();
   if (!startStr || !endStr) {
@@ -38,8 +44,8 @@ function processInvoicesGmailApi() {
     sheet = ss.insertSheet(tabName);
     sheet.appendRow(["Action", "Category", "Sender Name", "Sender Email", "Date", "Subject", "PDF Link", "Email ID", "Attachment Name"]);
     
-    // הוספת צ'קבוקסים
-    sheet.getRange("A2:A1000").insertCheckboxes();
+    // צ'קבוקסים יתווספו אחרי כתיבת הנתונים - לא כאן!
+    // sheet.getRange("A2:A1000").insertCheckboxes(); // הוסר - גורם לבעיית שורה 1000
     
     sheet.setFrozenRows(1);
     sheet.getRange("A1:I1").setFontWeight("bold").setBackground("#ddebf7");
@@ -184,7 +190,20 @@ function processInvoicesGmailApi() {
     .setValue(`🧾 נוספו: ${inserted} | הוחרגו: ${excludedCount} | ללא התאמה: ${noMatch}`)
     .setFontWeight("bold").setBackground("#d9ead3").setHorizontalAlignment("center");
 
-  _logMessage(log, `✅ Done: ${inserted} added | ${excludedCount} excl | ${noMatch} skipped`);
+  // סיכום מפורט בלוג
+  const endTime = new Date();
+  const duration = Math.round((endTime - startTime) / 1000);
+  
+  _logMessage("📊 ===== סיכום סריקה (Gmail API Advanced) =====");
+  _logMessage(`⏱️ זמן סיום: ${endTime.toLocaleString('he-IL')}`);
+  _logMessage(`⏱️ משך זמן: ${duration} שניות`);
+  _logMessage(`✅ נוספו לגיליון: ${inserted} רשומות`);
+  _logMessage(`🔴 הוחרגו (מיילים לא רצויים): ${excludedCount} רשומות`);
+  _logMessage(`⚪ דולגו (ללא התאמה): ${noMatch} רשומות`);
+  _logMessage(`📧 סה"כ מיילים נבדקו: ${inserted + excludedCount + noMatch}`);
+  _logMessage("✅ סריקה הושלמה בהצלחה!");
+  _logMessage("================================================");
+  
   SpreadsheetApp.getActiveSpreadsheet().toast("🎉 הסריקה הסתיימה!", "הסתיים", 10);
   SpreadsheetApp.getUi().alert(`🎉 הסריקה הסתיימה.\n✅ נוספו: ${inserted}\n🔴 הוחרגו: ${excludedCount}\n⚪ ללא התאמה: ${noMatch}`);
 }
@@ -264,8 +283,8 @@ function createAdvancedResultsSheet(ss, tabName) {
                .setFontColor("white")
                .setHorizontalAlignment("center");
     
-    // צ'קבוקסים
-    sheet.getRange("A2:A100").insertCheckboxes();
+    // צ'קבוקסים יתווספו אחרי כתיבת הנתונים
+    // sheet.getRange("A2:A100").insertCheckboxes(); // הוסר - גורם לבעיית שורה 1000
     
     // רוחב עמודות
     sheet.setColumnWidth(1, 60);  // Action
@@ -515,6 +534,16 @@ function processAdvancedMessages(messages, config, sheet) {
   }
   
   SpreadsheetApp.flush();
+  
+  // הוספת צ'קבוקסים רק לשורות שנכתבו בפועל
+  if (addedCount > 0) {
+    try {
+      sheet.getRange(2, 1, addedCount, 1).insertCheckboxes();
+      _logMessage(`✅ צ'קבוקסים נוצרו לשורות 2-${addedCount + 1} (${addedCount} רשומות)`);
+    } catch (e) {
+      _logMessage(`⚠️ שגיאה ביצירת צ'קבוקסים: ${e.message}`);
+    }
+  }
   
   const results = {
     added: addedCount,
@@ -1100,9 +1129,9 @@ function createAdvancedResultsSheet(ss, tabName) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     _logMessage("✅ כותרות נוצרו בהצלחה");
     
-    // הוספת צ'קבוקסים
-    sheet.getRange("A2:A100").insertCheckboxes();
-    _logMessage("✅ צ'קבוקסים נוצרו בהצלחה");
+    // צ'קבוקסים יתווספו אחרי כתיבת הנתונים
+    // sheet.getRange("A2:A100").insertCheckboxes(); // הוסר - גורם לבעיית שורה 1000
+    // _logMessage("✅ צ'קבוקסים נוצרו בהצלחה");
     
     // עיצוב בסיסי
     const headerRange = sheet.getRange("A1:L1");

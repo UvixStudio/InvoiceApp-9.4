@@ -34,7 +34,7 @@ function createMainMenu() {
     .addItem("⚙️ הגדרות ראשוניות", "setupSheets")
     .addItem("📁 הגדרת תיקיית סינכרון (Google Drive)", "showExportFolderDialog")
     .addSeparator()
-    .addItem("🚀 סריקת חשבוניות (Gmail API)", "processInvoicesGmailApi")
+    .addItem("🚀 סריקת חשבוניות (Gmail API)", "processInvoices")
     .addSeparator()
     .addItem("  ניטרןו OCR - חילוץ סכומים", "performNitroOcr")
     .addSeparator()
@@ -1360,19 +1360,7 @@ function handleExportActionFixed(sheetName, checkedRows) {
 }
 
 // === GMAIL API INTEGRATION ===
-function processInvoicesGmailApi() {
-  try {
-    // קריאה לפונקציה מ-gmailApiAdvanced.gs
-    if (typeof processInvoicesAdvanced === 'function') {
-      processInvoicesAdvanced();
-    } else {
-      SpreadsheetApp.getUi().alert("❌ פונקציית Gmail API לא זמינה. אנא ודא שהקובץ gmailApiAdvanced.gs קיים.");
-    }
-  } catch (e) {
-    _logMessage(`❌ שגיאה בהפעלת Gmail API: ${e.message}`);
-    SpreadsheetApp.getUi().alert(`❌ שגיאה בהפעלת Gmail API: ${e.message}`);
-  }
-}
+// הפונקציה processInvoices() מוגדרת ב-gmailProcessor.gs
 
 // === SYSTEM RESET - איפוס מערכת למשתמש חדש ===
 function systemReset() {
@@ -2346,15 +2334,18 @@ function clearLogSheet() {
       return;
     }
     
-    // מחיקת כל השורות מ-2 ומטה
-    logSheet.deleteRows(2, lastRow - 1);
+    // ניקוי תוכן השורות במקום מחיקתן (עובד גם עם שורות קפואות)
+    if (lastRow > 1) {
+      const rangeToClean = logSheet.getRange(2, 1, lastRow - 1, logSheet.getLastColumn());
+      rangeToClean.clearContent();
+    }
     
     // הודעת הצלחה
     ui.alert('✅ הלוג נוקה בהצלחה!');
     
     // לוג על הפעולה
     const timestamp = new Date().toLocaleString('he-IL');
-    logSheet.appendRow([timestamp, '🗑️ הלוג נוקה על ידי המשתמש']);
+    logSheet.getRange(2, 1, 1, 2).setValues([[timestamp, '🗑️ הלוג נוקה על ידי המשתמש']]);
     
   } catch (error) {
     console.error('שגיאה באיפוס הלוג:', error);

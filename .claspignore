@@ -1,0 +1,12 @@
+**/**
+!*.gs
+!*.js
+!*.html
+!appsscript.json
+archive/**
+.git/**
+.qodo/**
+node_modules/**
+*.md
+*.txt
+*.log
