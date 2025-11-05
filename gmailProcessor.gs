@@ -550,27 +550,42 @@ function hasInvoiceLink(emailData) {
 
 // === RECORD CREATOR ===
 function createInvoiceRecord(emailData, config) {
-  // פשוט יוצר רשומה - בלי בדיקות, בלי try-catch שמחזיר null
+  // יוצר רשומה + מעלה PDF ל-Drive
   const isLocal = isLocalEmail(emailData.email, emailData.subject, emailData.body);
   const category = isLocal ? "🔷 Local" : "🌐 International";
 
   let pdfLink = "";
   let attachmentName = "";
 
+  // אם יש PDF מצורף - העלאה ל-Drive (כמו בקוד הישן שעבד!)
   if (emailData.pdfAttachment) {
     attachmentName = emailData.pdfAttachment.getName();
+    console.log(`📎 נמצא PDF מצורף: ${attachmentName}`);
+    
     try {
-      const blob = emailData.pdfAttachment.getBlob();
-      const file = DriveApp.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      pdfLink = file.getUrl();
-    } catch (e) {
-      // אם העלאה נכשלת, נשאיר ריק
+      // העלאה ל-Drive - זה מה שעבד בגרסה הקודמת!
+      const driveFile = DriveApp.createFile(emailData.pdfAttachment);
+      driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      pdfLink = driveFile.getUrl();
+      console.log(`✅ הועלה ל-Drive: ${pdfLink}`);
+    } catch (driveError) {
+      console.error(`❌ שגיאה בהעלאה ל-Drive: ${driveError.message}`);
+      // אם נכשל - ננסה למצוא לינק בגוף המייל
       pdfLink = "";
     }
-  } else {
+  }
+  
+  // אם אין PDF מצורף או ההעלאה נכשלה - חיפוש לינק בגוף המייל
+  if (!pdfLink || pdfLink === "") {
+    console.log(`🔍 מחפש לינק לחשבונית בגוף המייל...`);
     pdfLink = extractInvoiceLinkFromHtml(emailData.htmlBody) || 
               extractInvoiceLinkFromPlainText(emailData.body) || "";
+    
+    if (pdfLink) {
+      console.log(`✅ נמצא לינק בגוף המייל: ${pdfLink.substring(0, 80)}...`);
+    } else {
+      console.log(`⚠️ לא נמצא לינק`);
+    }
   }
 
   return [
@@ -580,7 +595,7 @@ function createInvoiceRecord(emailData, config) {
     emailData.email || "",                    // Sender Email
     formatDateInput(emailData.date),          // Date
     emailData.subject || "",                  // Subject
-    pdfLink,                                  // PDF Link
+    pdfLink,                                  // PDF Link (Drive או מהמייל)
     emailData.messageId || "",                // Email ID
     attachmentName                            // Attachment Name
   ];

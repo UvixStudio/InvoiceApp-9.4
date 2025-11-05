@@ -190,8 +190,8 @@ function extractInvoiceLinkFromHtml(html) {
 
   const patterns = [
     /<a[^>]+href\s*=\s*["']([^"']*?\.pdf)["']/gi,
-    /<a[^>]+href\s*=\s*["']([^"']*?(?:download|invoice|receipt|bill|payment|view)[^"']*?\.pdf)["']/gi,
-    /<button[^>]*onclick\s*=\s*["'][^"']*?window\.open\(['"](https?:\/\/[^'"]+\.pdf)['"]/gi,
+    /<a[^>]+href\s*=\s*["']([^"']*?(?:download|invoice|receipt|bill|payment|view)[^"']*?)["']/gi,
+    /<button[^>]*onclick\s*=\s*["'][^"']*?window\.open\(['"](https?:\/\/[^'"]+)['"]/gi,
     /<iframe[^>]+src\s*=\s*["']([^"']*?\.pdf)["']/gi
   ];
 
@@ -199,37 +199,14 @@ function extractInvoiceLinkFromHtml(html) {
     regex.lastIndex = 0;
     const match = regex.exec(html);
     if (match && match[1]) {
-      console.log(`🔍 Found PDF link in HTML: ${match[1]}`);
-      try {
-        const blob = UrlFetchApp.fetch(match[1]).getBlob();
-        // יצירת הקובץ בתיקייה הנכונה
-        const exportFolderId = getExportFolderId();
-        let file;
-        
-        if (exportFolderId) {
-          try {
-            const folder = DriveApp.getFolderById(exportFolderId);
-            file = folder.createFile(blob);
-            console.log(`✅ Uploaded to specific folder: ${file.getUrl()}`);
-          } catch (e) {
-            console.log(`⚠️ Failed to use export folder, using root: ${e.message}`);
-            file = DriveApp.createFile(blob);
-          }
-        } else {
-          file = DriveApp.createFile(blob);
-          console.log(`ℹ️ No export folder set, using root`);
-        }
-        
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        console.log(`✅ Uploaded to Drive: ${file.getUrl()}`);
-        return file.getUrl();
-      } catch (e) {
-        console.error(`❌ Error uploading to Drive: ${e.message}`);
-      }
+      const originalLink = match[1];
+      console.log(`✅ נמצא לינק ב-HTML: ${originalLink.substring(0, 80)}...`);
+      // פשוט מחזיר את הלינק המקורי - לא מעלה ל-Drive!
+      return originalLink;
     }
   }
 
-  console.log('⚠️ No valid PDF link found in HTML.');
+  console.log('⚠️ לא נמצא לינק ב-HTML');
   return null;
 }
 
@@ -241,47 +218,25 @@ function extractInvoiceLinkFromPlainText(body) {
 
   const urlRegexPatterns = [
     /(https?:\/\/[^\s"'<>]+\.pdf)/gi,
-    /(?:(?:invoice|receipt|bill|download|view).{0,30})(https?:\/\/[^\s"'<>]+\.pdf)/gi
+    /(https?:\/\/[^\s"'<>]+(?:download|invoice|receipt|bill|payment|view)[^\s"'<>]*)/gi,
+    /(?:(?:invoice|receipt|bill|download|view).{0,30})(https?:\/\/[^\s"'<>]+)/gi
   ];
 
   for (const regex of urlRegexPatterns) {
     const matches = body.match(regex);
     if (matches) {
-      for (const url of matches) {
-        if (/\.pdf$/i.test(url)) {
-          console.log(`🔍 Found PDF link in plain text: ${url}`);
-          try {
-            const blob = UrlFetchApp.fetch(url).getBlob();
-            // יצירת הקובץ בתיקייה הנכונה
-            const exportFolderId = getExportFolderId();
-            let file;
-            
-            if (exportFolderId) {
-              try {
-                const folder = DriveApp.getFolderById(exportFolderId);
-                file = folder.createFile(blob);
-                console.log(`✅ Uploaded to specific folder: ${file.getUrl()}`);
-              } catch (e) {
-                console.log(`⚠️ Failed to use export folder, using root: ${e.message}`);
-                file = DriveApp.createFile(blob);
-              }
-            } else {
-              file = DriveApp.createFile(blob);
-              console.log(`ℹ️ No export folder set, using root`);
-            }
-            
-            file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-            console.log(`✅ Uploaded to Drive: ${file.getUrl()}`);
-            return file.getUrl();
-          } catch (e) {
-            console.error(`❌ Error uploading to Drive: ${e.message}`);
-          }
-        }
+      for (let url of matches) {
+        // ניקוי URL מתווים מיותרים בסוף
+        url = url.replace(/[.,;:)\]}>]+$/, '');
+        
+        console.log(`✅ נמצא לינק בטקסט: ${url.substring(0, 80)}...`);
+        // פשוט מחזיר את הלינק המקורי - לא מעלה ל-Drive!
+        return url;
       }
     }
   }
 
-  console.log('⚠️ No valid PDF link found in plain text.');
+  console.log('⚠️ לא נמצא לינק בטקסט');
   return null;
 }
 
@@ -322,7 +277,7 @@ function saveFolderId(id) {
   const settings = ss.getSheetByName("Settings");
   if (!settings) return;
 
-  settings.getRange("H2").setValue(id);
+  settings.getRange("I2").setValue(id);
 }
 
 function getExportFolderId() {
@@ -330,5 +285,5 @@ function getExportFolderId() {
   const settings = ss.getSheetByName("Settings");
   if (!settings) return null;
 
-  return settings.getRange("H2").getValue();
+  return settings.getRange("I2").getValue();
 }
