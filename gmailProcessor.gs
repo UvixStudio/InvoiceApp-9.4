@@ -375,7 +375,6 @@ function extractEmailData(message) {
 
 // === EMAIL PROCESSOR ===
 function processEmails(emails, config, sheet, log, startTime) {
-  let inserted = 0;
   let skipped = 0;
   let duplicates = 0;
   
@@ -384,76 +383,33 @@ function processEmails(emails, config, sheet, log, startTime) {
   
   _logMessage(log, `🔄 מתחיל עיבוד ${emails.length} מיילים`, 'INFO');
   
-  // הודעה על מיקום כתיבת הרשומות
+  // ⚡ V32 OPTIMIZATION: Batch Write - בניית מערך במקום כתיבה שורה-שורה
+  const allRecords = [];
   const startingRow = findLastRowWithData(sheet) + 1;
   _logMessage(log, `📝 רשומות חדשות יתחילו משורה ${startingRow}`, 'INFO');
   
+  // טוסט התחלה
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    `⚡ מעבד ${emails.length} מיילים...`, 
+    "Phase 1: עיבוד", 3
+  );
+  
   for (let i = 0; i < emails.length; i++) {
     const emailData = emails[i];
-    
-    // עדכון התקדמות עם progress bar
-    if (i % 5 === 0 || i === emails.length - 1) {
-      const progressBar = createScanProgressBar(i + 1, emails.length);
-      const elapsedTime = Math.round((new Date() - startTime) / 1000);
-      SpreadsheetApp.getActiveSpreadsheet().toast(
-        `📧 מעבד מייל ${i + 1}/${emails.length} | ⏱️ ${formatScanDuration(elapsedTime)}\n${progressBar}`, 
-        "סריקה פעילה", 8
-      );
-    }
     
     try {
       // בדיקת כפילויות
       if (existingRecords.has(emailData.messageId)) {
         duplicates++;
-        
-        // עדכון progress bar גם לכפילויות
-        if (duplicates % 5 === 0 || i === emails.length - 1) {
-          const progressBar = createScanProgressBar(i + 1, emails.length);
-          const elapsedTime = Math.round((new Date() - startTime) / 1000);
-          SpreadsheetApp.getActiveSpreadsheet().toast(
-            `🔍 בודק מיילים ${i + 1}/${emails.length} | ${duplicates} כפילויות | ⏱️ ${formatScanDuration(elapsedTime)}\n${progressBar}`, 
-            "סריקה פעילה", 8
-          );
-        }
-        
         continue;
       }
       
-      // השאילתה כבר עשתה את כל הסינון - אנחנו רק כותבים
-      // אין סינון נוסף בשלב זה
-      _logMessage(log, `✅ מתקבל: ${emailData.email} - "${emailData.subject}"`, 'SUCCESS');
-      
-      // יצירת רשומה - בלי בדיקות, הכל נכנס
+      // יצירת רשומה
       try {
         const record = createInvoiceRecord(emailData, config);
-        
-        // מציאת השורה הבאה לכתיבה
-        const nextRow = findLastRowWithData(sheet) + 1;
-        
-        // כתיבה בשורה ספציפית
-        sheet.getRange(nextRow, 1, 1, record.length).setValues([record]);
-        
-        SpreadsheetApp.flush();
-        
-        _logMessage(log, `✅ נוסף: ${emailData.email} - שורה ${nextRow}`, 'SUCCESS');
-        
-        inserted++;
+        allRecords.push(record);
         existingRecords.set(emailData.messageId, true);
-        
-        // עדכון progress bar לכתיבת רשומות
-        if (inserted % 5 === 0) {
-          const progressBar = createScanProgressBar(inserted, emails.length);
-          const elapsedTime = Math.round((new Date() - startTime) / 1000);
-          SpreadsheetApp.getActiveSpreadsheet().toast(
-            `📝 נמצאו ${emails.length} מיילים - כותב רשומה ${inserted} | ⏱️ ${formatScanDuration(elapsedTime)}\n${progressBar}`, 
-            "סריקה פעילה", 8
-          );
-        }
-        
-        // Flush כל 20 רשומות
-        if (inserted % 20 === 0) {
-          SpreadsheetApp.flush();
-        }
+        _logMessage(log, `✅ מתקבל: ${emailData.email} - "${emailData.subject}"`, 'SUCCESS');
       } catch (recordError) {
         _logMessage(log, `❌ שגיאה ביצירת רשומה: ${emailData.email} - ${recordError.message}`, 'ERROR');
         skipped++;
@@ -465,26 +421,43 @@ function processEmails(emails, config, sheet, log, startTime) {
     }
   }
   
-  // Flush סופי
-  SpreadsheetApp.flush();
-  
-  // הוספת צ'קבוקסים רק לשורות שנכתבו בפועל
-  if (inserted > 0) {
-    try {
-      // מציאת השורה האחרונה עם נתונים אמיתיים
-      const lastRowWithData = findLastRowWithData(sheet);
-      const startRow = lastRowWithData - inserted + 1; // השורה הראשונה של הרשומות החדשות
-      
-      sheet.getRange(startRow, 1, inserted, 1).insertCheckboxes();
-      _logMessage(log, `✅ צ'קבוקסים נוצרו לשורות ${startRow}-${lastRowWithData} (${inserted} רשומות)`, 'SUCCESS');
-    } catch (e) {
-      _logMessage(log, `⚠️ שגיאה ביצירת צ'קבוקסים: ${e.message}`, 'WARNING');
-    }
+  // ⚡ בדיקה: אם אין רשומות, לא לכתוב כלום
+  if (allRecords.length === 0) {
+    _logMessage(log, `⚠️ אין רשומות חדשות לכתיבה`, 'WARNING');
+    return { inserted: 0, skipped, duplicates, total: emails.length };
   }
   
-  _logMessage(log, `📊 תוצאות עיבוד: ${inserted} נוספו, ${skipped} דולגו, ${duplicates} כפילויות`, 'SUCCESS');
+  // טוסט כתיבה
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    `📝 כותב ${allRecords.length} רשומות לגיליון...`, 
+    "Phase 2: כתיבה", 3
+  );
   
-  return { inserted, skipped, duplicates, total: emails.length };
+  // ⚡ V32 OPTIMIZATION: כתיבה אחת לכל הרשומות!
+  try {
+    sheet.getRange(startingRow, 1, allRecords.length, allRecords[0].length)
+         .setValues(allRecords);
+    
+    _logMessage(log, `✅ נכתבו ${allRecords.length} רשומות בבת אחת (שורות ${startingRow}-${startingRow + allRecords.length - 1})`, 'SUCCESS');
+  } catch (writeError) {
+    _logMessage(log, `❌ שגיאה בכתיבה: ${writeError.message}`, 'ERROR');
+    return { inserted: 0, skipped, duplicates, total: emails.length };
+  }
+  
+  // Flush אחד בלבד
+  SpreadsheetApp.flush();
+  
+  // הוספת צ'קבוקסים
+  try {
+    sheet.getRange(startingRow, 1, allRecords.length, 1).insertCheckboxes();
+    _logMessage(log, `✅ צ'קבוקסים נוצרו לשורות ${startingRow}-${startingRow + allRecords.length - 1}`, 'SUCCESS');
+  } catch (e) {
+    _logMessage(log, `⚠️ שגיאה ביצירת צ'קבוקסים: ${e.message}`, 'WARNING');
+  }
+  
+  _logMessage(log, `📊 תוצאות עיבוד: ${allRecords.length} נוספו, ${skipped} דולגו, ${duplicates} כפילויות`, 'SUCCESS');
+  
+  return { inserted: allRecords.length, skipped, duplicates, total: emails.length };
 }
 
 // === EXISTING RECORDS GETTER ===
