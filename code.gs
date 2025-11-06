@@ -57,11 +57,9 @@ function createActionsMenu() {
   
   const actionsMenu = ui.createMenu("⚡ פעולות")
     .addItem("🚫 החרג נבחרים", "excludeSelected")
-    .addItem("🔷 סמן כמקומי", "markAsLocal")
-    .addItem("🌐 סמן כבינלאומי", "markAsInternational")
     .addSeparator()
-    .addItem("📦 הכן קבצים להורדה (נבחרים)", "prepareDownloadLinksForSelected")  // V32C
-    .addItem("📦 יצא נבחרים", "exportSelected")
+    .addItem("📦 הכן קבצים להורדה", "prepareDownloadLinksForSelected")  // V32C - נבחרים או הכל
+    // .addItem("📦 הורד כ-ZIP", "downloadAsZip")  // ✅ V32 FIX: מושבת זמנית - הפונקציה לא קיימת
     .addItem("🗑️ מחק נבחרים", "deleteSelected")
     .addSeparator()
     .addItem("✅ הוסף נבחרים למאושרים", "approveSelected")

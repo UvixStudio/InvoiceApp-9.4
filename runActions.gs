@@ -233,18 +233,18 @@ function handleApproveAction(settings, log, checkedRows) {
 }
 
 // === CATEGORY ACTION ===
+// ✅ V32: Category = אינדיקטור ויזואלי בלבד (לא נשמר)
 function handleCategoryAction(sheet, checkedRows, action, categoryColumnIndex) {
   const category = action === 'local' ? "🔷 Local" : "🌐 International";
   
   for (const row of checkedRows) {
-    setSenderCategory(row.email, category);
     const rowRange = sheet.getRange(row.rowIndex, categoryColumnIndex);
     rowRange.setValue(category);
   }
   
   return { 
     success: true, 
-    message: `✅ ${checkedRows.length} חשבוניות סומנו כ-${category} ונשמרו להמשך.` 
+    message: `✅ ${checkedRows.length} חשבוניות סומנו כ-${category}.` 
   };
 }
 

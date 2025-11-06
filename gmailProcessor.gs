@@ -75,35 +75,41 @@ function processInvoices() {
     const sheet = createOrUpdateResultsSheet(ss, config.tabName, log);
     if (!sheet) return;
 
-    // ⚡ V32A: הגדרת Mini-Log בגיליון (G3-G9)
-    const statusQueryCell    = sheet.getRange("G3");
-    const statusStartCell    = sheet.getRange("G4");
-    const statusFoundCell    = sheet.getRange("G5");
-    const statusStateCell    = sheet.getRange("G6");
-    const statusProgressCell = sheet.getRange("G7");
-    const statusCurrentCell  = sheet.getRange("G8");
-    const statusSummaryCell  = sheet.getRange("G9");
+    // ✅ V32: איפוס Mini-Log (F1-G11)
+    const statusSheet = sheet;
+    const statusRange = statusSheet.getRange("F1:G11");
+    statusRange.clearContent();
 
-    // התחלת סריקה עם מדידת זמן
-    SpreadsheetApp.getActiveSpreadsheet().toast("🔍 מתחיל סריקת Gmail...", "סריקה", 3);
+    // ✅ V32: כותרות Mini-Log
+    statusSheet.getRange("F1").setValue("status");
+    statusSheet.getRange("G1").setValue("שאילתה");
+
+    // בניית שאילתה
+    const query = buildGmailQuery(config);
+    
+    // ✅ V32: שאילתה ב-Mini-Log
+    statusSheet.getRange("G2").setValue(query);
+    
+    // ✅ V32: זמן התחלה ב-Mini-Log
+    statusSheet.getRange("F3").setValue(`זמן התחלה: ${startTime.toLocaleTimeString()}`);
+    
+    // ✅ V32: מצב ראשוני
+    statusSheet.getRange("F6").setValue("מתחיל סריקה...");
+    statusSheet.getRange("F7").setValue("0 % |                    |");
     
     _logMessage(log, `⏱️ התחלת סריקה: ${startTime.toLocaleTimeString()}`, 'INFO');
     
-    // ⚡ V32A: עדכון Mini-Log - התחלה
-    statusStartCell.setValue(`זמן התחלה: ${startTime.toLocaleTimeString('he-IL')}`);
-    statusStateCell.setValue("🔄 הסריקה התחילה...");
-    statusProgressCell.setValue("");
-    statusCurrentCell.setValue("");
-    statusSummaryCell.setValue("");
-    
-    const scanResults = performGmailScan(config, log, startTime, statusQueryCell, statusFoundCell);
+    const scanResults = performGmailScan(config, log, startTime, statusSheet);
     const scanEndTime = new Date();
     const scanDuration = Math.round((scanEndTime - startTime) / 1000);
     _logMessage(log, `⏱️ סיום סריקת Gmail: ${scanEndTime.toLocaleTimeString()} - ${formatScanDuration(scanDuration)}`, 'INFO');
     
+    // ✅ V32: עדכון Mini-Log - נמצאו מיילים
+    statusSheet.getRange("F5").setValue(`נמצאו ${scanResults.emails.length} מיילים בסינון הראשוני`);
+    
     if (scanResults.emails.length === 0) {
-      statusStateCell.setValue("ℹ️ לא נמצאו מיילים");
-      statusSummaryCell.setValue("לא נמצאו מיילים בטווח התאריכים שהוגדר");
+      statusSheet.getRange("F6").setValue("ℹ️ לא נמצאו מיילים");
+      statusSheet.getRange("F9").setValue("לא נמצאו מיילים בטווח התאריכים שהוגדר");
       SpreadsheetApp.getUi().alert("לא נמצאו מיילים בטווח התאריכים שהוגדר.\n\nבדוק:\n1. טווח התאריכים\n2. מילות המפתח\n3. שיש מיילים עם קבצים מצורפים");
       _logMessage(log, "❌ לא נמצאו מיילים לעיבוד", 'WARNING');
       return;
@@ -117,11 +123,7 @@ function processInvoices() {
       config, 
       sheet, 
       log, 
-      startTime,
-      statusStateCell,
-      statusProgressCell,
-      statusCurrentCell,
-      statusSummaryCell
+      startTime
     );
     const processEndTime = new Date();
     const processDuration = Math.round((processEndTime - processStartTime) / 1000);
@@ -150,7 +152,6 @@ function quickApiScanInvoices() {
   }
   
   _logMessage(log, "⚡ התחלת סריקה מהירה", 'INFO');
-  SpreadsheetApp.getActiveSpreadsheet().toast("⚡ מתחיל סריקה מהירה...", "סריקה מהירה", 3);
   
   // קריאה לפונקציה הרגילה - זה יהיה מהיר יותר
   processInvoices();
@@ -227,42 +228,31 @@ function createOrUpdateResultsSheet(ss, tabName, log) {
       sheet.setColumnWidth(10, 100); // Sum Local
       sheet.setColumnWidth(11, 100); // Sum Intl
       sheet.setColumnWidth(12, 80);  // Currency
-      sheet.setColumnWidth(13, 250); // Mail Link (V32B)
-      sheet.setColumnWidth(14, 250); // Download Link (V32C)
+      sheet.setColumnWidth(13, 250); // Mail Link
+      sheet.setColumnWidth(14, 250); // Download Link
 
-      // ⚡ V32B+C: עמודות חדשות - Mail Link + Download Link
       const headers = [
         "Action", "Category", "Sender Name", "Sender Email", "Date", 
         "Subject", "PDF Link", "Email ID", "Attachment Name", 
         "Sum (Local)", "Sum (Int'l)", "Currency",
-        "Mail Link", "Download Link"  // V32B+C: עמודות חדשות
+        "Mail Link", "Download Link"
       ];
       
-      sheet.appendRow(headers);
+      // ✅ V32: כותרות בשורה 13 (לא 1!)
+      sheet.getRange(13, 1, 1, headers.length).setValues([headers]);
       
       // עיצוב כותרות
-      const headerRange = sheet.getRange("A1:N1");  // V32B+C: עד N במקום L
+      const headerRange = sheet.getRange(13, 1, 1, headers.length);
       headerRange.setFontWeight("bold")
                  .setBackground("#4285f4")
                  .setFontColor("white")
                  .setHorizontalAlignment("center");
       
-      // צ'קבוקסים יתווספו אחרי כתיבת הנתונים
-      // const checkboxRange = sheet.getRange("A2:A1000"); // הוסר - גורם לבעיית שורה 1000
-      // checkboxRange.insertCheckboxes();
+      // ✅ V32: הקפאת 13 שורות ראשונות (Mini-Log 1-11, רווח 12, כותרות 13)
+      sheet.setFrozenRows(13);
       
-      // הוספת validation לקטגוריה
-      const categoryRange = sheet.getRange("B2:B1000");
-      categoryRange.setDataValidation(
-        SpreadsheetApp.newDataValidation()
-          .requireValueInList(['🔷 Local', '🌐 International'])
-          .build()
-      );
-      
-      sheet.setFrozenRows(1);
-      
-      // הסתרת עמודת Action (נשלט דרך התפריט)
-      sheet.hideColumns(1, 1); // מסתיר עמודה A
+      // הסתרת עמודת Action
+      sheet.hideColumns(1, 1);
       
       SpreadsheetApp.flush();
       
@@ -270,7 +260,7 @@ function createOrUpdateResultsSheet(ss, tabName, log) {
     } else {
       _logMessage(log, `📋 משתמש בגיליון קיים: ${tabName}`, 'INFO');
       
-      // ניקוי צ'קבוקסים ישנים שגורמים לבעיית שורה 1000
+      // ניקוי צ'קבוקסים ישנים
       try {
         cleanupOldCheckboxes(sheet, log);
       } catch (e) {
@@ -286,21 +276,16 @@ function createOrUpdateResultsSheet(ss, tabName, log) {
 }
 
 // === GMAIL SCANNER ===
-function performGmailScan(config, log, startTime, statusQueryCell, statusFoundCell) {
+// ✅ V32: הסרת Mini-Log מכאן - הוא מנוהל ב-processInvoices
+function performGmailScan(config, log, startTime, statusSheet) {
   try {
     // בניית שאילתת חיפוש
     const query = buildGmailQuery(config);
-    // לוג השאילתה בשורות נפרדות לקריאות טובה יותר
     _logMessage(log, `שאילתת Gmail:`, 'INFO');
     _logMessage(log, `${query}`, 'INFO');
     
-    // ⚡ V32A: עדכון Mini-Log - שאילתה
-    if (statusQueryCell) {
-      statusQueryCell.setValue(`שאילתה: ${query.substring(0, 100)}...`);
-    }
-    
     // חיפוש מיילים
-    const threads = GmailApp.search(query, 0, 500); // מקסימום 500 מיילים
+    const threads = GmailApp.search(query, 0, 500);
     _logMessage(log, `📧 נמצאו ${threads.length} שרשורי מייל שעברו סינון ראשוני`, 'INFO');
     
     if (threads.length === 0) {
@@ -325,11 +310,6 @@ function performGmailScan(config, log, startTime, statusQueryCell, statusFoundCe
     
     _logMessage(log, `📨 נמצאו ${totalMessages} הודעות ב-${threads.length} שרשורים`, 'INFO');
     _logMessage(log, `📋 חולצו ${allEmails.length} מיילים לעיבוד`, 'INFO');
-    
-    // ⚡ V32A: עדכון Mini-Log - נמצאו מיילים
-    if (statusFoundCell) {
-      statusFoundCell.setValue(`📬 נמצאו ${allEmails.length} מיילים בסינון הראשוני`);
-    }
     
     return { emails: allEmails, skipped: [] };
     
@@ -413,7 +393,8 @@ function extractEmailData(message) {
 }
 
 // === EMAIL PROCESSOR ===
-function processEmails(emails, config, sheet, log, startTime, statusStateCell, statusProgressCell, statusCurrentCell, statusSummaryCell) {
+function processEmails(emails, config, sheet, log, startTime) {
+  let inserted = 0;
   let skipped = 0;
   let duplicates = 0;
   
@@ -422,22 +403,20 @@ function processEmails(emails, config, sheet, log, startTime, statusStateCell, s
   
   _logMessage(log, `🔄 מתחיל עיבוד ${emails.length} מיילים`, 'INFO');
   
-  // ⚡ V32A FIX: Batch Write אמיתי - בניית מערך, כתיבה אחת בסוף
+  // ✅ V32: Batch Write - בניית מערך
   const allRecords = [];
+  
+  // ⚡ V32 PERFORMANCE: Batch Logging - אוסף לוגים למערך
+  const logBatch = [];
+  
+  // ✅ V32 CRITICAL: startingRow דינאמי!
   const startingRow = findLastRowWithData(sheet) + 1;
   _logMessage(log, `📝 רשומות חדשות יתחילו משורה ${startingRow}`, 'INFO');
   
-  // ⚡ V32A FIX: עדכון Mini-Log - רק ב-G6 (לא בתוך הטבלה!)
-  const total = emails.length;
-  if (statusStateCell) {
-    statusStateCell.setValue("⚙️ מעבד מיילים...");
-  }
+  // ✅ V32: הפניה ל-Mini-Log
+  const statusSheet = sheet;
   
-  // חישוב כמה עדכונים לעשות (מקסימום 15)
-  const maxUpdates = 15;
-  const step = Math.max(1, Math.floor(total / maxUpdates));
-  
-  // ⚡ V32A FIX: לולאה - רק בניית מערך, ללא כתיבה!
+  // ⚡ V32 FIXED: Batch Write אמיתי - כתיבה אחת בסוף!
   for (let i = 0; i < emails.length; i++) {
     const emailData = emails[i];
     
@@ -448,23 +427,19 @@ function processEmails(emails, config, sheet, log, startTime, statusStateCell, s
         continue;
       }
       
-      // יצירת רשומה - רק push למערך!
+      // יצירת רשומה ודחיפה למערך
       try {
         const record = createInvoiceRecord(emailData, config);
-        allRecords.push(record);  // ⚡ רק push - לא setValues!
+        allRecords.push(record);  // ← רק דוחף למערך, לא כותב!
+        
         existingRecords.set(emailData.messageId, true);
+        inserted++;
+        
+        // לוג בגיליון Log (לא Mini-Log!)
         _logMessage(log, `✅ מתקבל: ${emailData.email} - "${emailData.subject}"`, 'SUCCESS');
       } catch (recordError) {
         _logMessage(log, `❌ שגיאה ביצירת רשומה: ${emailData.email} - ${recordError.message}`, 'ERROR');
         skipped++;
-      }
-      
-      // ⚡ V32A FIX: עדכון Mini-Log כל X מיילים (רק G7/G8 - לא טוסט!)
-      if (statusProgressCell && statusCurrentCell && ((i + 1) % step === 0 || i === total - 1)) {
-        const progress = Math.round(((i + 1) / total) * 100);
-        statusProgressCell.setValue(`⏳ ${i + 1} מתוך ${total} מיילים (${progress}%)`);
-        statusCurrentCell.setValue(`מייל נוכחי: ${emailData.email} — "${emailData.subject.substring(0, 40)}..."`);
-        // ⚡ אין flush כאן! אין טוסט כאן!
       }
       
     } catch (error) {
@@ -472,55 +447,27 @@ function processEmails(emails, config, sheet, log, startTime, statusStateCell, s
       skipped++;
     }
   }
-  // ⚡ סוף הלולאה - לא היה שום setValues, לא היה שום flush!
   
-  // ⚡ בדיקה: אם אין רשומות, לא לכתוב כלום
-  if (allRecords.length === 0) {
-    _logMessage(log, `⚠️ אין רשומות חדשות לכתיבה`, 'WARNING');
-    if (statusStateCell) {
-      statusStateCell.setValue("ℹ️ אין רשומות חדשות להוספה");
-    }
-    if (statusSummaryCell) {
-      statusSummaryCell.setValue(`לא נמצאו חשבוניות חדשות. ${skipped} מיילים דולגו.`);
-    }
-    return { inserted: 0, skipped, duplicates, total: emails.length };
-  }
-  
-  // ⚡ V32A FIX: כתיבה אחת לכל הרשומות - אחרי הלולאה!
-  try {
+  // ⚡ כתיבה אחת של כל הרשומות!
+  if (allRecords.length > 0) {
     sheet.getRange(startingRow, 1, allRecords.length, allRecords[0].length)
          .setValues(allRecords);
-    
-    _logMessage(log, `✅ נכתבו ${allRecords.length} רשומות בבת אחת (שורות ${startingRow}-${startingRow + allRecords.length - 1})`, 'SUCCESS');
-  } catch (writeError) {
-    _logMessage(log, `❌ שגיאה בכתיבה: ${writeError.message}`, 'ERROR');
-    return { inserted: 0, skipped, duplicates, total: emails.length };
+    sheet.getRange(startingRow, 1, allRecords.length, 1)
+         .insertCheckboxes();
+    _logMessage(log, `✅ נכתבו ${allRecords.length} רשומות בבת אחת`, 'SUCCESS');
   }
   
-  // ⚡ V32A FIX: הוספת צ'קבוקסים - אחרי הכתיבה
-  try {
-    sheet.getRange(startingRow, 1, allRecords.length, 1).insertCheckboxes();
-    _logMessage(log, `✅ צ'קבוקסים נוצרו לשורות ${startingRow}-${startingRow + allRecords.length - 1}`, 'SUCCESS');
-  } catch (e) {
-    _logMessage(log, `⚠️ שגיאה ביצירת צ'קבוקסים: ${e.message}`, 'WARNING');
-  }
-  
-  // ⚡ V32A FIX: Flush אחד בלבד - בסוף הכל!
+  // ✅ Flush אחד בסוף
   SpreadsheetApp.flush();
   
-  // ⚡ V32A FIX: עדכון Mini-Log - סיכום (רק G6/G9)
-  if (statusStateCell) {
-    statusStateCell.setValue("✅ הסריקה הושלמה!");
-  }
-  if (statusSummaryCell) {
-    statusSummaryCell.setValue(
-      `🎯 תוצאות: ${allRecords.length} חשבוניות חדשות, ${skipped} דולגו, ${duplicates} כפילויות, סה"כ ${total} מיילים נבדקו.`
-    );
-  }
+  // ✅ עדכון Mini-Log - סיכום בלבד (F9)
+  statusSheet.getRange("F9").setValue(
+    `תוצאות: ${inserted} נוספו, ${skipped} דולגו, ${duplicates} כפילויות`
+  );
   
-  _logMessage(log, `📊 תוצאות עיבוד: ${allRecords.length} נוספו, ${skipped} דולגו, ${duplicates} כפילויות`, 'SUCCESS');
+  _logMessage(log, `📊 תוצאות עיבוד: ${inserted} נוספו, ${skipped} דולגו, ${duplicates} כפילויות`, 'SUCCESS');
   
-  return { inserted: allRecords.length, skipped, duplicates, total: emails.length };
+  return { inserted, skipped, duplicates, total: emails.length };
 }
 
 // === EXISTING RECORDS GETTER ===
@@ -548,19 +495,19 @@ function getExistingRecords(sheet) {
   return existingRecords;
 }
 
-// פונקציה למציאת השורה האחרונה עם נתונים אמיתיים
+// ✅ V32: פונקציה למציאת השורה האחרונה עם נתונים אמיתיים
 function findLastRowWithData(sheet) {
   const maxRows = sheet.getLastRow();
   
   // בדיקה מלמטה למעלה לשורה עם נתונים בעמודת Email ID (עמודה H)
-  for (let row = maxRows; row >= 2; row--) {
+  for (let row = maxRows; row >= 14; row--) {  // ✅ מתחיל מ-14 (אחרי כותרות בשורה 13)
     const emailId = sheet.getRange(row, 8).getValue(); // עמודה H = Email ID
     if (emailId && emailId.toString().trim() !== '') {
       return row;
     }
   }
   
-  return 1; // אם לא נמצאו נתונים, החזר 1 (רק כותרות)
+  return 13; // ✅ אם אין נתונים, החזר 13 (הכותרות)
 }
 
 // פונקציה לניקוי צ'קבוקסים ישנים
@@ -677,9 +624,21 @@ function buildGmailAttachmentLink(messageId, attachmentIndex) {
   return `https://mail.google.com/mail/u/0/?ui=2&view=att&th=${messageId}&attid=${attId}&disp=safe&zw`;
 }
 
+// === LOCAL EMAIL CHECKER ===
+// ✅ V32 PERFORMANCE: לוגיקה פשוטה ומהירה (בלי PropertiesService!)
+function isLocalEmail(email, subject, body) {
+  const localDomains = [".co.il", ".org.il", ".gov.il", ".muni.il", ".ac.il"];
+  const isLocalDomain = localDomains.some(domain => email.toLowerCase().endsWith(domain));
+  
+  // בדיקת תווים עבריים
+  const hasHebrew = /[\u0590-\u05FF]/.test(subject) || /[\u0590-\u05FF]/.test(body);
+  
+  return isLocalDomain || hasHebrew;
+}
+
 // === RECORD CREATOR ===
 function createInvoiceRecord(emailData, config) {
-  // ⚡ V32B: סריקה קלה - רק נתוני מייל, ללא Drive!
+  // ⚡ V32: סריקה מהירה - רק נתוני מייל, ללא Drive!
   const isLocal = isLocalEmail(emailData.email, emailData.subject, emailData.body);
   const category = isLocal ? "🔷 Local" : "🌐 International";
 
@@ -750,14 +709,15 @@ function showScanSummary(results, log) {
 • ${results.duplicates} כפילויות נמצאו
 • ${results.total} מיילים נבדקו בסך הכל
 
-${results.inserted > 0 ? '🎉 החשבוניות זמינות בגיליון החדש!' : '⚠️ לא נמצאו חשבוניות חדשות.'}`;
+${results.inserted > 0 ? '🎉 החשבוניות זמינות בגיליון החדש!' : '⚠️ לא נמצאו חשבוניות חדשות.'}
+
+💡 עכשיו אפשר:
+1. לצפייה/הורדה ישירה → לחץ על Download Link
+2. לסנכרון ל-Drive → תפריט "פעולות" → "הכן קבצים להורדה"`;
 
   SpreadsheetApp.getUi().alert("סיכום סריקה", message, SpreadsheetApp.getUi().ButtonSet.OK);
   
-  SpreadsheetApp.getActiveSpreadsheet().toast(
-    `✅ הסריקה הושלמה: ${results.inserted} נוספו, ${results.skipped} דולגו`,
-    "הושלם", 10
-  );
+  // ✅ V32: אין טוסטים! כל ההתקדמות ב-Mini-Log
   
   _logMessage(log, message.replace(/\n/g, ' '), 'SUCCESS');
 }
@@ -957,13 +917,12 @@ function processActionSelection(sheetName, action, checkedRows) {
     case 'international': {
       const category = action === 'local' ? "🔷 Local" : "🌐 International";
       for (const row of checkedRows) {
-        setSenderCategory(row.email, category);
         const rowRange = sheet.getRange(row.rowIndex, categoryColumnIndex);
         rowRange.setValue(category);
       }
       return { 
         success: true, 
-        message: `✅ ${checkedRows.length} חשבוניות סומנו כ-${category} ונשמרו להמשך.` 
+        message: `✅ ${checkedRows.length} חשבוניות סומנו כ-${category}.` 
       };
     }
     case 'export':
@@ -1255,6 +1214,7 @@ function checkSpreadsheetWritePermissions() {
 /**
  * ⚡ V32C FIX: פונקציה ראשית - הכן קבצים להורדה
  * עובדת לפי בחירת שורות פיזית (selection) או על כל השורות
+ * ✅ V32 Phase 1: Batch Write מלא + gmailCache + דילוג על שורות 1-13
  */
 function prepareDownloadLinksForSelected() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1273,7 +1233,7 @@ function prepareDownloadLinksForSelected() {
     // קריאת כל הנתונים (Batch Read)
     const dataRange = activeSheet.getDataRange();
     const data = dataRange.getValues();
-    const headers = data[0];
+    const headers = data[12];  // ✅ שורה 13 = אינדקס 12
     
     // מציאת אינדקסים של עמודות
     const emailIdColIdx = headers.indexOf("Email ID");
@@ -1297,9 +1257,9 @@ function prepareDownloadLinksForSelected() {
       _logMessage(log, `📦 נבחרו ${numRows} שורות (${startRow} עד ${startRow + numRows - 1})`, 'INFO');
       
       for (let i = startRow; i < startRow + numRows; i++) {
-        if (i > 0 && i < data.length && data[i - 1][emailIdColIdx]) {  // i-1 כי data מתחיל מ-0
+        if (i > 13 && i <= data.length && data[i - 1][emailIdColIdx]) {  // ✅ דילוג על שורות 1-13
           selectedRows.push({
-            rowIndex: i,
+            dataIndex: i - 1,  // אינדקס במערך data
             messageId: data[i - 1][emailIdColIdx]
           });
         }
@@ -1308,10 +1268,10 @@ function prepareDownloadLinksForSelected() {
       // אין selection - עבוד על כל השורות עם נתונים
       _logMessage(log, `📦 אין selection - מכין לינקים לכל השורות`, 'INFO');
       
-      for (let i = 1; i < data.length; i++) {  // מתחיל מ-1 (דילוג על כותרות)
+      for (let i = 13; i < data.length; i++) {  // ✅ מתחיל מ-13 (שורה 14 = אינדקס 13)
         if (data[i][emailIdColIdx]) {
           selectedRows.push({
-            rowIndex: i + 1,  // +1 כי מערך מתחיל מ-0
+            dataIndex: i,
             messageId: data[i][emailIdColIdx]
           });
         }
@@ -1325,17 +1285,12 @@ function prepareDownloadLinksForSelected() {
     
     _logMessage(log, `📦 מכין לינקי הורדה ל-${selectedRows.length} חשבוניות`, 'INFO');
     
-    // ⚡ V32C: עדכון Mini-Log
-    const statusStateCell = activeSheet.getRange("G6");
-    const statusProgressCell = activeSheet.getRange("G7");
-    const statusSummaryCell = activeSheet.getRange("G9");
-    
-    statusStateCell.setValue("📦 מכין לינקי הורדה...");
+    // ⚡ V32 Phase 1: gmailCache למניעת קריאות כפולות
+    const gmailCache = {};
     
     // עיבוד כל שורה מסומנת
     let preparedCount = 0;
     let skippedCount = 0;
-    const updatesToWrite = [];  // Batch Write
     
     for (let i = 0; i < selectedRows.length; i++) {
       const row = selectedRows[i];
@@ -1346,8 +1301,15 @@ function prepareDownloadLinksForSelected() {
           continue;
         }
         
-        // קבלת המייל מ-Gmail
-        const message = GmailApp.getMessageById(row.messageId);
+        // ✅ קבלת המייל מ-Cache או מ-Gmail
+        let message = gmailCache[row.messageId];
+        if (!message) {
+          message = GmailApp.getMessageById(row.messageId);
+          if (message) {
+            gmailCache[row.messageId] = message;
+          }
+        }
+        
         if (!message) {
           _logMessage(log, `⚠️ לא נמצא מייל עם ID: ${row.messageId}`, 'WARNING');
           skippedCount++;
@@ -1370,39 +1332,33 @@ function prepareDownloadLinksForSelected() {
         // יצירת Download Link
         const downloadLink = buildGmailAttachmentLink(row.messageId, pdfAttachmentIndex);
         
-        // שמירה לעדכון Batch
-        updatesToWrite.push({
-          row: row.rowIndex,
-          col: downloadLinkColIdx + 1,  // +1 כי getRange מתחיל מ-1
-          value: downloadLink
-        });
+        // ✅ עדכון ישיר ב-array (לא push לרשימה נפרדת)
+        data[row.dataIndex][downloadLinkColIdx] = downloadLink;
         
         preparedCount++;
         
-        // עדכון Progress
-        if (statusProgressCell && (i + 1) % 5 === 0) {
+        // עדכון Progress ב-Mini-Log
+        if ((i + 1) % 5 === 0) {
           const progress = Math.round(((i + 1) / selectedRows.length) * 100);
-          statusProgressCell.setValue(`📦 ${i + 1} מתוך ${selectedRows.length} (${progress}%)`);
+          activeSheet.getRange("G7").setValue(`📦 ${i + 1} מתוך ${selectedRows.length} (${progress}%)`);
         }
         
       } catch (error) {
-        _logMessage(log, `❌ שגיאה בעיבוד שורה ${row.rowIndex}: ${error.message}`, 'ERROR');
+        _logMessage(log, `❌ שגיאה בעיבוד שורה ${row.dataIndex + 1}: ${error.message}`, 'ERROR');
         skippedCount++;
       }
     }
     
-    // ⚡ V32C: Batch Write - כתיבה אחת לכל העדכונים
-    if (updatesToWrite.length > 0) {
-      for (const update of updatesToWrite) {
-        activeSheet.getRange(update.row, update.col).setValue(update.value);
-      }
+    // ✅ V32 Phase 1: Batch Write אמיתי - כתיבה אחת של כל ה-data
+    if (preparedCount > 0) {
+      activeSheet.getRange(1, 1, data.length, data[0].length).setValues(data);
       SpreadsheetApp.flush();
     }
     
     // עדכון Mini-Log - סיכום
-    statusStateCell.setValue("✅ הכנת לינקים הושלמה!");
-    statusProgressCell.setValue("");
-    statusSummaryCell.setValue(
+    activeSheet.getRange("G6").setValue("✅ הכנת לינקים הושלמה!");
+    activeSheet.getRange("G7").setValue("");
+    activeSheet.getRange("G9").setValue(
       `📦 ${preparedCount} חשבוניות קיבלו Download Link, ${skippedCount} דולגו`
     );
     

@@ -134,25 +134,9 @@ function formatDateInput(date) {
   return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
 }
 
-// === SENDER CATEGORY CONFIGURATION ===
-function getSenderCategory(email) {
-  const senderConfig = PropertiesService.getScriptProperties();
-  return senderConfig.getProperty(`category_${email}`);
-}
-
-function setSenderCategory(email, category) {
-  const senderConfig = PropertiesService.getScriptProperties();
-  senderConfig.setProperty(`category_${email}`, category);
-}
-
+// === LOCAL EMAIL CHECKER ===
+// ✅ V32: לוגיקה פשוטה ומהירה - אינדיקטור ויזואלי בלבד
 function isLocalEmail(email, subject, body) {
-  // First check if we have a saved category for this sender
-  const savedCategory = getSenderCategory(email);
-  if (savedCategory) {
-    return savedCategory === "🔷 Local";
-  }
-
-  // If no saved category, use the default logic
   const localDomains = [".co.il", ".org.il", ".gov.il", ".muni.il", ".ac.il"];
   const isLocalDomain = localDomains.some(domain => email.toLowerCase().endsWith(domain));
   

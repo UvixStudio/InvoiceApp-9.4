@@ -90,6 +90,13 @@ function performSmartSync(targetFolder, log, startTime) {
   // קבלת קבצים קיימים בתיקייה
   const existingFiles = getExistingFiles(targetFolder);
   
+  // ✅ דיווח על מצב התיקייה
+  if (existingFiles.size === 0) {
+    _logMessage(log, `📁 התיקייה ריקה - זו הפעם הראשונה שמסנכרנים`, 'INFO');
+  } else {
+    _logMessage(log, `📁 נמצאו ${existingFiles.size} קבצים קיימים בתיקייה`, 'INFO');
+  }
+  
   for (const sheet of sheets) {
     _logMessage(log, `🔄 מסנכרן גיליון פעיל: ${sheet.getName()}`, 'INFO');
     
@@ -116,7 +123,7 @@ function performSmartSync(targetFolder, log, startTime) {
  */
 function syncSheetToFolder(sheet, targetFolder, existingFiles, log, startTime) {
   const data = sheet.getDataRange().getValues();
-  const headers = data[0];
+  const headers = data[12];  // ✅ V32 FIX: כותרות בשורה 13 (אינדקס 12)
   
   const pdfLinkIndex = headers.indexOf("PDF Link");
   const senderNameIndex = headers.indexOf("Sender Name");
@@ -138,14 +145,14 @@ function syncSheetToFolder(sheet, targetFolder, existingFiles, log, startTime) {
   let sheetFolder = getOrCreateSubfolder(targetFolder, sheetFolderName);
   
   // הודעת התחלת עיבוד
-  const totalRows = data.length - 1; // מינוס שורת הכותרות
+  const totalRows = data.length - 13; // ✅ V32 FIX: מינוס Mini-Log (11) + רווח (1) + כותרות (1) = 13
   SpreadsheetApp.getActiveSpreadsheet().toast(
     `📋 מעבד גיליון: ${sheet.getName()} (${totalRows} רשומות)`, 
     "סנכרון", 3
   );
   
-  // עבור על כל השורות - עיבוד מהיר!
-  for (let i = 1; i < data.length; i++) {
+  // ✅ V32 FIX: עבור רק על שורות הנתונים (מ-14 ואילך, אחרי Mini-Log + כותרות)
+  for (let i = 13; i < data.length; i++) {  // ← שורה 13 = כותרות (אינדקס 12), נתונים מ-14 (אינדקס 13)
     const row = data[i];
     processed++;
     

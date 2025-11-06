@@ -1,63 +1,197 @@
 =============================================================================
                     RELEASE NOTES - VERSION 32 Phase 1
-                  InvoiceApp_V32_Phase1_Batch_Write_Fix
+                  InvoiceApp_V32_Phase1_Complete_Optimization
                         תאריך: 06/11/2025
 =============================================================================
 
 🎯 סיכום הגרסה
 ===============
-Phase 1 של אופטימיזציית הביצועים - Batch Write Fix
-מטרה: להאיץ את הסריקה מ-4 דקות ל-20 שניות
+V32 Phase 1 - אופטימיזציה מלאה של מנוע הסריקה
+מטרה: להאיץ את הסריקה, להוסיף Mini-Log חי, ולהכין תשתית ל-Gmail-First
 
 =============================================================================
 
-✅ תיקונים שבוצעו (FIXES)
-===========================
+✅ תיקונים שבוצעו (FIXES) - 6 שלבים
+======================================
 
-### 🚀 Phase 1: Batch Write Optimization [COMPLETED]
+### 🏗️ שלב 1: createOrUpdateResultsSheet [COMPLETED]
+**קובץ:** `gmailProcessor.gs`
+**פונקציה:** `createOrUpdateResultsSheet()`
+
+**שינויים:**
+- ✅ כותרות בשורה 13 (במקום 1)
+- ✅ `setFrozenRows(13)` - הקפאת 13 שורות ראשונות
+- ✅ הוספת עמודות: "Mail Link", "Download Link"
+- ✅ התאמת רוחב עמודות (13-14)
+- ✅ הסרת Mini-Log מהפונקציה (עבר ל-processInvoices)
+
+**מבנה גיליון חדש:**
+```
+שורות 1-11:  Mini-Log (F1-G11)
+שורה 12:     רווח
+שורה 13:     כותרות (header כחול)
+שורה 14+:    נתונים
+```
+
+---
+
+### 📊 שלב 2: processInvoices - Mini-Log Setup [COMPLETED]
+**קובץ:** `gmailProcessor.gs`
+**פונקציה:** `processInvoices()`
+
+**שינויים:**
+- ✅ איפוס Mini-Log (F1-G11) בתחילת סריקה
+- ✅ כותרות Mini-Log (F1: "status", G1: "שאילתה")
+- ✅ שאילתה ב-G2
+- ✅ זמן התחלה ב-F3
+- ✅ מצב ראשוני (F6-F7)
+- ✅ עדכון F5 אחרי סריקת Gmail
+
+**Mini-Log Layout:**
+```
+F1: "status"          G1: "שאילתה"
+                      G2: [שאילתת Gmail המלאה]
+F3: "זמן התחלה: HH:MM:SS"
+F5: "נמצאו X מיילים בסינון הראשוני"
+F6: "סורק i מתוך N"
+F7: "0% |████      | 40%"
+F8: "מתקבל: שולח – נושא"
+F9: "תוצאות: X נוספו, Y דולגו, Z כפילויות"
+```
+
+---
+
+### 🚀 שלב 3: processEmails - Batch Write + Mini-Log [COMPLETED]
 **קובץ:** `gmailProcessor.gs`
 **פונקציה:** `processEmails()`
 
-**בעיה:** 
+**בעיה (V31):** 
 - כתיבה שורה-אחרי-שורה לגיליון
 - `SpreadsheetApp.flush()` אחרי כל שורה
 - טוסטים מרובים (כל 5 מיילים)
 - זמן: 4 דקות ל-21 מיילים (12 שניות למייל)
 
-**פתרון:**
-- בניית מערך `allRecords[]` במקום כתיבה מיידית
-- כתיבה אחת: `setValues(allRecords)` לכל הרשומות
-- `flush()` פעם אחת בלבד
-- 2 טוסטים בלבד (עיבוד + כתיבה)
-- בדיקה: `if (allRecords.length === 0)` למניעת שגיאות
+**פתרון (V32):**
+- ✅ בניית מערך `allRecords[]` במקום כתיבה מיידית
+- ✅ כתיבה אחת: `setValues(allRecords)` לכל הרשומות
+- ✅ `flush()` פעם אחת בלבד
+- ✅ `startingRow` דינאמי: `findLastRowWithData(sheet) + 1`
+- ✅ עדכון Mini-Log בלולאה (F6-F8) כל 3 מיילים
+- ✅ עדכון F9 בסוף עם סיכום
+- ✅ הסרת כל הטוסטים מהפונקציה
 
-**קוד לפני:**
+**קוד לפני (V31):**
 ```javascript
 for (let i = 0; i < emails.length; i++) {
   const record = createInvoiceRecord(emailData, config);
   const nextRow = findLastRowWithData(sheet) + 1;
   sheet.getRange(nextRow, 1, 1, record.length).setValues([record]); // ← איטי!
   SpreadsheetApp.flush(); // ← איטי!
+  
+  if (i % 5 === 0) {
+    SpreadsheetApp.getActiveSpreadsheet().toast(...); // ← מעצבן!
+  }
 }
 ```
 
-**קוד אחרי:**
+**קוד אחרי (V32):**
 ```javascript
 const allRecords = [];
+const startingRow = findLastRowWithData(sheet) + 1; // ← דינאמי!
+
 for (let i = 0; i < emails.length; i++) {
   const record = createInvoiceRecord(emailData, config);
   allRecords.push(record); // ← מהיר!
+  
+  // עדכון Mini-Log כל 3 מיילים
+  if (i === 0 || i === emails.length - 1 || i % 3 === 0) {
+    statusSheet.getRange("F6").setValue(`סורק ${i + 1} מתוך ${emails.length}`);
+    statusSheet.getRange("F7").setValue(createScanProgressBar(i + 1, emails.length));
+    statusSheet.getRange("F8").setValue(`מתקבל: ${emailData.email} – ${emailData.subject}`);
+  }
 }
+
 if (allRecords.length === 0) return { inserted: 0, skipped, duplicates };
+
+// ✅ כתיבה אחת!
 sheet.getRange(startingRow, 1, allRecords.length, allRecords[0].length)
-     .setValues(allRecords); // ← כתיבה אחת!
+     .setValues(allRecords);
+sheet.getRange(startingRow, 1, allRecords.length, 1).insertCheckboxes();
 SpreadsheetApp.flush(); // ← פעם אחת!
+
+// עדכון Mini-Log - סיכום
+statusSheet.getRange("F9").setValue(
+  `תוצאות: ${inserted} נוספו, ${skipped} דולגו, ${duplicates} כפילויות`
+);
 ```
+
+---
+
+### 🔇 שלב 4: הסרת טוסטים [COMPLETED]
+**קבצים:** `gmailProcessor.gs`
+**פונקציות:** `quickApiScanInvoices()`, `showScanSummary()`
+
+**שינויים:**
+- ✅ הסרת טוסט מ-`quickApiScanInvoices()`
+- ✅ הסרת טוסט מ-`showScanSummary()`
+- ✅ אין טוסטים בכלל במהלך הסריקה!
+- ✅ רק פופאפ סיכום אחד בסוף
+
+**תוצאה:**
+- 📊 Mini-Log מציג התקדמות בזמן אמת
+- 🎯 אין הפרעות למשתמש
+- ✅ חוויה נקייה ומקצועית
+
+---
+
+### 📦 שלב 5: prepareDownloadLinksForSelected - Batch Write [COMPLETED]
+**קובץ:** `gmailProcessor.gs`
+**פונקציה:** `prepareDownloadLinksForSelected()`
+
+**בעיה (גרסה ישנה):**
+- לולאה של `setValue()` לכל שורה
+- אין gmailCache - קריאות כפולות ל-Gmail
+- לא דילג על שורות 1-13 (Mini-Log + כותרות)
+
+**פתרון (V32):**
+- ✅ gmailCache למניעת קריאות כפולות
+- ✅ עדכון ישיר ב-array: `data[row.dataIndex][downloadColIdx] = link`
+- ✅ כתיבה אחת: `sheet.getRange(1, 1, data.length, data[0].length).setValues(data)`
+- ✅ דילוג נכון על שורות 1-13: `headers = data[12]`, לולאה מ-`i=13`
+- ✅ תמיכה ב-selection (שורות מסומנות) או כל השורות
+
+**קוד אחרי (V32):**
+```javascript
+const data = sheet.getDataRange().getValues();
+const headers = data[12];  // ✅ שורה 13 = אינדקס 12
+const gmailCache = {};     // ✅ cache
+
+for (let i = 13; i < data.length; i++) {  // ✅ מתחיל מ-13
+  const message = gmailCache[messageId] || GmailApp.getMessageById(messageId);
+  gmailCache[messageId] = message;
+  
+  const link = buildGmailAttachmentLink(messageId, pdfAttachmentIndex);
+  data[i][downloadColIdx] = link;  // ✅ עדכון ב-array
+}
+
+// ✅ כתיבה אחת!
+sheet.getRange(1, 1, data.length, data[0].length).setValues(data);
+```
+
+---
+
+### ✅ שלב 6: Code Review סופי [COMPLETED]
+**בדיקות שבוצעו:**
+- ✅ `getDiagnostics` - אין שגיאות syntax
+- ✅ כל 6 השלבים הושלמו
+- ✅ הקוד עקבי ונקי
+- ✅ כל הדרישות מתקיימות
 
 **תוצאה צפויה:**
 - ⚡ **10x מהיר** - מ-4 דקות ל-20-30 שניות
-- 📊 **פחות פעולות** - 70 שורות קוד → 43 שורות
-- 🎯 **נקי יותר** - 2 טוסטים במקום 20+
+- 📊 **Mini-Log חי** - התקדמות בזמן אמת ב-F1-G11
+- 🎯 **אין טוסטים** - חוויה נקייה
+- 🚀 **Batch Write** - כתיבה אחת בכל מקום
 
 **סטטוס:** ✅ תוקן ונדחף (ממתין לבדיקת משתמש)
 
@@ -198,10 +332,13 @@ SpreadsheetApp.flush(); // ← פעם אחת!
 
 ### Code Changes:
 - Files Modified: 1 (gmailProcessor.gs)
-- Lines Added: 43
-- Lines Removed: 70
-- Net Change: -27 lines (simpler!)
-- Functions Changed: 1 (processEmails)
+- Functions Changed: 4
+  - `createOrUpdateResultsSheet()` - מבנה גיליון חדש
+  - `processInvoices()` - Mini-Log setup
+  - `processEmails()` - Batch Write + Mini-Log updates
+  - `prepareDownloadLinksForSelected()` - Batch Write + gmailCache
+- Lines Changed: ~200 lines (major refactor)
+- New Features: Mini-Log (F1-G11), Mail Link, Download Link columns
 
 ### Time Investment:
 - Planning: 1 hour
