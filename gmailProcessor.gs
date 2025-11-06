@@ -1,5 +1,35 @@
 // === GmailProcessor.gs - סריקה חדשה ופועלת ===
 
+/**
+ * יצירת progress bar ויזואלי לטוסט
+ */
+function createScanProgressBar(current, total, width = 20) {
+  const percentage = Math.round((current / total) * 100);
+  const filled = Math.round((current / total) * width);
+  const empty = width - filled;
+  
+  // רק בלוקים מלאים ורווחים - נקי וברור
+  const bar = '█'.repeat(filled) + ' '.repeat(empty);
+  return `|${bar}| ${percentage}%`;
+}
+
+/**
+ * המרת שניות לפורמט זמן קריא
+ */
+function formatScanDuration(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  } else if (minutes > 0) {
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  } else {
+    return `${secs}s`;
+  }
+}
+
 // === HELPER: Check Drive Permissions ===
 function checkDrivePermissions() {
   try {
@@ -45,10 +75,15 @@ function processInvoices() {
     const sheet = createOrUpdateResultsSheet(ss, config.tabName, log);
     if (!sheet) return;
 
-    // התחלת סריקה
+    // התחלת סריקה עם מדידת זמן
+    const startTime = new Date();
     SpreadsheetApp.getActiveSpreadsheet().toast("🔍 מתחיל סריקת Gmail...", "סריקה", 5);
     
-    const scanResults = performGmailScan(config, log);
+    _logMessage(log, `⏱️ התחלת סריקה: ${startTime.toLocaleTimeString()}`, 'INFO');
+    const scanResults = performGmailScan(config, log, startTime);
+    const scanEndTime = new Date();
+    const scanDuration = Math.round((scanEndTime - startTime) / 1000);
+    _logMessage(log, `⏱️ סיום סריקת Gmail: ${scanEndTime.toLocaleTimeString()} - ${formatScanDuration(scanDuration)}`, 'INFO');
     
     if (scanResults.emails.length === 0) {
       SpreadsheetApp.getUi().alert("לא נמצאו מיילים בטווח התאריכים שהוגדר.\n\nבדוק:\n1. טווח התאריכים\n2. מילות המפתח\n3. שיש מיילים עם קבצים מצורפים");
@@ -56,10 +91,15 @@ function processInvoices() {
       return;
     }
 
-    // עיבוד המיילים
-    SpreadsheetApp.getActiveSpreadsheet().toast(`📧 מעבד ${scanResults.emails.length} מיילים...`, "עיבוד", 5);
+    // עיבוד המיילים עם progress bar
+    SpreadsheetApp.getActiveSpreadsheet().toast(`📧 נמצאו ${scanResults.emails.length} מיילים - מתחיל עיבוד...`, "עיבוד", 5);
     
-    const processResults = processEmails(scanResults.emails, config, sheet, log);
+    const processStartTime = new Date();
+    _logMessage(log, `⏱️ התחלת עיבוד מיילים: ${processStartTime.toLocaleTimeString()}`, 'INFO');
+    const processResults = processEmails(scanResults.emails, config, sheet, log, startTime);
+    const processEndTime = new Date();
+    const processDuration = Math.round((processEndTime - processStartTime) / 1000);
+    _logMessage(log, `⏱️ סיום עיבוד מיילים: ${processEndTime.toLocaleTimeString()} - ${formatScanDuration(processDuration)}`, 'INFO');
     
     // סיכום וסיום
     showScanSummary(processResults, log);
@@ -217,7 +257,7 @@ function createOrUpdateResultsSheet(ss, tabName, log) {
 }
 
 // === GMAIL SCANNER ===
-function performGmailScan(config, log) {
+function performGmailScan(config, log, startTime) {
   try {
     // בניית שאילתת חיפוש
     const query = buildGmailQuery(config);
@@ -277,23 +317,22 @@ function buildGmailQuery(config) {
   parts.push("-is:chat");
   parts.push("-in:chats");
   parts.push("-is:muted");
-  parts.push('-subject:(re: OR fwd: OR fw: OR "תשובה" OR "העברה")');
+  parts.push('-subject:(re: OR fwd: OR fw: OR תשובה OR העברה)');
   
   // מילות חיפוש רק בנושא (subject) - OR ביניהן
   const allKeywords = [...config.enKeywords, ...config.heKeywords].filter(k => k && k.trim());
+  
   if (allKeywords.length > 0) {
-    const keywordQuery = allKeywords.map(k => k.trim()).join(" OR ");
+    // הוספת גרשיים לכל מילת חיפוש - עוזר ל-Gmail לזהות נכון (במיוחד עברית)
+    const keywordQuery = allKeywords.map(k => `"${k.trim()}"`).join(" OR ");
     parts.push(`subject:(${keywordQuery})`);
+    console.log(`🔍 חיפוש לפי ${allKeywords.length} מילות מפתח (עם גרשיים)`);
   } else {
-    // אם אין מילות מפתח בסטינגס - תן שגיאה ברורה
     throw new Error('❌ לא הוגדרו מילות חיפוש בטאב Settings! אנא הוסף מילות חיפוש בעמודות C ו-D');
   }
   
-  // חריגת מיילים מוחרגים
-  if (config.excludedEmails && config.excludedEmails.length > 0) {
-    const excludedQuery = config.excludedEmails.map(email => `-from:${email.trim()}`).join(" ");
-    parts.push(excludedQuery);
-  }
+  // הערה: Approved Senders ו-Excluded Emails יטופלו בשלב הסינון הפנימי (Post-Processing)
+  // לא בשאילתת Gmail - כך השאילתה נשארת פשוטה ומהירה
   
   return parts.join(" ");
 }
@@ -335,7 +374,7 @@ function extractEmailData(message) {
 }
 
 // === EMAIL PROCESSOR ===
-function processEmails(emails, config, sheet, log) {
+function processEmails(emails, config, sheet, log, startTime) {
   let inserted = 0;
   let skipped = 0;
   let duplicates = 0;
@@ -352,11 +391,13 @@ function processEmails(emails, config, sheet, log) {
   for (let i = 0; i < emails.length; i++) {
     const emailData = emails[i];
     
-    // עדכון התקדמות
-    if (i % 10 === 0) {
+    // עדכון התקדמות עם progress bar
+    if (i % 5 === 0 || i === emails.length - 1) {
+      const progressBar = createScanProgressBar(i + 1, emails.length);
+      const elapsedTime = Math.round((new Date() - startTime) / 1000);
       SpreadsheetApp.getActiveSpreadsheet().toast(
-        `מעבד מייל ${i + 1}/${emails.length}...`, 
-        "עיבוד", 2
+        `📧 מעבד מייל ${i + 1}/${emails.length} | ⏱️ ${formatScanDuration(elapsedTime)}\n${progressBar}`, 
+        "סריקה פעילה", 8
       );
     }
     
@@ -364,6 +405,17 @@ function processEmails(emails, config, sheet, log) {
       // בדיקת כפילויות
       if (existingRecords.has(emailData.messageId)) {
         duplicates++;
+        
+        // עדכון progress bar גם לכפילויות
+        if (duplicates % 5 === 0 || i === emails.length - 1) {
+          const progressBar = createScanProgressBar(i + 1, emails.length);
+          const elapsedTime = Math.round((new Date() - startTime) / 1000);
+          SpreadsheetApp.getActiveSpreadsheet().toast(
+            `🔍 בודק מיילים ${i + 1}/${emails.length} | ${duplicates} כפילויות | ⏱️ ${formatScanDuration(elapsedTime)}\n${progressBar}`, 
+            "סריקה פעילה", 8
+          );
+        }
+        
         continue;
       }
       
@@ -387,6 +439,16 @@ function processEmails(emails, config, sheet, log) {
         
         inserted++;
         existingRecords.set(emailData.messageId, true);
+        
+        // עדכון progress bar לכתיבת רשומות
+        if (inserted % 5 === 0) {
+          const progressBar = createScanProgressBar(inserted, emails.length);
+          const elapsedTime = Math.round((new Date() - startTime) / 1000);
+          SpreadsheetApp.getActiveSpreadsheet().toast(
+            `📝 נמצאו ${emails.length} מיילים - כותב רשומה ${inserted} | ⏱️ ${formatScanDuration(elapsedTime)}\n${progressBar}`, 
+            "סריקה פעילה", 8
+          );
+        }
         
         // Flush כל 20 רשומות
         if (inserted % 20 === 0) {
@@ -498,30 +560,50 @@ function getSkipReason(emailData, config) {
   const email = emailData.email.toLowerCase();
   const subject = emailData.subject.toLowerCase();
   
-  // רק בדיקות בסיסיות - השאילתה כבר עשתה את העבודה הכבדה
+  // בדיקה 1: האם זה שולח מאושר? אם כן - אישור מיידי!
+  if (config.approvedSenders && config.approvedSenders.length > 0) {
+    const isApproved = config.approvedSenders.some(approved => 
+      email.includes(approved.toLowerCase())
+    );
+    if (isApproved) {
+      console.log(`✅ שולח מאושר: ${email}`);
+      return null; // מאושר - לא דולג
+    }
+  }
   
-  // בדיקת מיילים מוחרגים מפורשים
-  const excludedEmail = config.excludedEmails.find(excluded => email.includes(excluded));
+  // בדיקה 2: מיילים מוחרגים מפורשים
+  const excludedEmail = config.excludedEmails.find(excluded => 
+    email.includes(excluded.toLowerCase())
+  );
   if (excludedEmail) {
     return `מייל מוחרג: ${excludedEmail}`;
   }
   
-  // בדיקת מילים מוחרגות בנושא בלבד
-  const excludedWord = config.excludedKeywords.find(word => subject.includes(word));
+  // בדיקה 3: מילים מוחרגות בנושא
+  const excludedWord = config.excludedKeywords.find(word => 
+    subject.includes(word.toLowerCase())
+  );
   if (excludedWord) {
     return `מילה מוחרגת: "${excludedWord}"`;
   }
   
-  // דילוג על הזמנות קלנדר ברורות
+  // בדיקה 4: הזמנות קלנדר
   if (subject.includes('invitation:') || subject.includes('invite') || 
       subject.includes('meeting') || subject.includes('calendar')) {
     return 'הזמנת קלנדר';
   }
   
-  // השאילתה כבר סיננה subject: ו-filename:pdf
-  // אז אנחנו מאשרים כמעט הכל שהגיע עד כאן
+  // בדיקה 5: האם יש מילת מפתח בנושא?
+  const allKeywords = [...config.enKeywords, ...config.heKeywords].filter(k => k && k.trim());
+  const hasKeyword = allKeywords.some(keyword => 
+    subject.includes(keyword.toLowerCase())
+  );
   
-  return null; // לא דולג - מאשר את המייל
+  if (!hasKeyword) {
+    return 'אין מילת מפתח בנושא';
+  }
+  
+  return null; // עבר את כל הבדיקות - מאושר
 }
 
 // === EMAIL FILTER (LEGACY COMPATIBILITY) ===

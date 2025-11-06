@@ -13,7 +13,12 @@ function syncInvoicesToDrive() {
     return;
   }
   
-  _logMessage(log, "🔄 התחלת סנכרון חכם ל-Drive", 'INFO');
+  // מדידת זמן התחלה
+  const startTime = new Date();
+  _logMessage(log, `🔄 התחלת סנכרון חכם ל-Drive [${startTime.toLocaleTimeString()}]`, 'INFO');
+  
+  // הודעת התחלה
+  SpreadsheetApp.getActiveSpreadsheet().toast("🔄 מתחיל סנכרון לדרייב...", "סנכרון", 3);
   
   try {
     // קבלת מזהה תיקיית היעד
@@ -37,12 +42,22 @@ function syncInvoicesToDrive() {
     _logMessage(log, `📁 מסנכרן לתיקייה: ${targetFolder.getName()}`, 'INFO');
     
     // איסוף חשבוניות מכל הגיליונות
-    const syncResults = performSmartSync(targetFolder, log);
+    const syncResults = performSmartSync(targetFolder, log, startTime);
+    
+    // חישוב זמן ביצוע
+    const endTime = new Date();
+    const durationMs = endTime - startTime;
+    const durationSec = Math.round(durationMs / 1000);
+    
+    // הוספת זמן לתוצאות
+    syncResults.startTime = startTime;
+    syncResults.endTime = endTime;
+    syncResults.durationSec = durationSec;
     
     // הצגת תוצאות
     showSyncResults(syncResults);
     
-    _logMessage(log, "✅ סנכרון הושלם בהצלחה", 'SUCCESS');
+    _logMessage(log, `✅ סנכרון הושלם בהצלחה [${endTime.toLocaleTimeString()}] - זמן ביצוע: ${durationSec} שניות`, 'SUCCESS');
     
   } catch (error) {
     _logMessage(log, `❌ שגיאה בסנכרון: ${error.message}`, 'ERROR');
@@ -53,10 +68,19 @@ function syncInvoicesToDrive() {
 /**
  * ביצוע סנכרון חכם
  */
-function performSmartSync(targetFolder, log) {
+function performSmartSync(targetFolder, log, startTime) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const pattern = /^invoices /i;
-  const sheets = ss.getSheets().filter(sheet => pattern.test(sheet.getName()));
+  
+  // עיבוד רק הגיליון הפעיל במקום כל הגיליונות
+  const activeSheet = ss.getActiveSheet();
+  
+  // בדיקה שהגיליון הפעיל הוא גיליון חשבוניות
+  if (!pattern.test(activeSheet.getName())) {
+    throw new Error(`❌ הגיליון הנוכחי "${activeSheet.getName()}" אינו גיליון חשבוניות.\nאנא עבור לגיליון חשבוניות (invoices YYYY-MM-DD) ונסה שוב.`);
+  }
+  
+  const sheets = [activeSheet]; // רק הגיליון הפעיל
   
   let totalProcessed = 0;
   let totalSynced = 0;
@@ -67,9 +91,9 @@ function performSmartSync(targetFolder, log) {
   const existingFiles = getExistingFiles(targetFolder);
   
   for (const sheet of sheets) {
-    _logMessage(log, `🔄 מעבד גיליון: ${sheet.getName()}`, 'INFO');
+    _logMessage(log, `🔄 מסנכרן גיליון פעיל: ${sheet.getName()}`, 'INFO');
     
-    const sheetResults = syncSheetToFolder(sheet, targetFolder, existingFiles, log);
+    const sheetResults = syncSheetToFolder(sheet, targetFolder, existingFiles, log, startTime);
     
     totalProcessed += sheetResults.processed;
     totalSynced += sheetResults.synced;
@@ -82,14 +106,15 @@ function performSmartSync(targetFolder, log) {
     totalSynced,
     totalSkipped,
     totalErrors,
-    sheetsProcessed: sheets.length
+    sheetsProcessed: sheets.length,
+    sheetName: activeSheet.getName() // שם הגיליון שעובד
   };
 }
 
 /**
  * סנכרון גיליון בודד לתיקייה
  */
-function syncSheetToFolder(sheet, targetFolder, existingFiles, log) {
+function syncSheetToFolder(sheet, targetFolder, existingFiles, log, startTime) {
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   
@@ -105,29 +130,51 @@ function syncSheetToFolder(sheet, targetFolder, existingFiles, log) {
   let skipped = 0;
   let errors = 0;
   
-  // יצירת תת-תיקייה לגיליון
-  const sheetFolderName = sanitizeFileName(sheet.getName());
+  // יצירת תת-תיקייה לפי טווח תאריכים (לא שם הגיליון)
+  // חילוץ טווח התאריכים משם הגיליון (למשל: "invoices 01.09.25-30.09.25" → "01.09.25-30.09.25")
+  const sheetName = sheet.getName();
+  const dateRangeMatch = sheetName.match(/(\d{2}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2})/);
+  const sheetFolderName = dateRangeMatch ? dateRangeMatch[1] : sanitizeFileName(sheetName);
   let sheetFolder = getOrCreateSubfolder(targetFolder, sheetFolderName);
   
-  // עבור על כל השורות
+  // הודעת התחלת עיבוד
+  const totalRows = data.length - 1; // מינוס שורת הכותרות
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    `📋 מעבד גיליון: ${sheet.getName()} (${totalRows} רשומות)`, 
+    "סנכרון", 3
+  );
+  
+  // עבור על כל השורות - עיבוד מהיר!
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     processed++;
     
+    // הצגת התקדמות כל 5 רשומות - טוסט קבוע יותר
+    if (processed % 5 === 0) {
+      const progressBar = createProgressBar(processed, totalRows);
+      const elapsedTime = Math.round((new Date() - startTime) / 1000);
+      SpreadsheetApp.getActiveSpreadsheet().toast(
+        `🔍 בודק רשומה ${processed}/${totalRows} | ⏱️ ${formatDuration(elapsedTime)}\n${progressBar}`, 
+        "סנכרון פעיל", 8
+      );
+    }
+    
     try {
       const pdfLink = row[pdfLinkIndex];
       const senderName = row[senderNameIndex] || 'Unknown';
+      const senderEmail = row[senderEmailIndex] || '';
       const subject = row[subjectIndex] || 'No Subject';
       const date = row[dateIndex];
       const category = row[categoryIndex];
+      const attachmentName = row[headers.indexOf("Attachment Name")] || '';
       
       if (!pdfLink || !pdfLink.trim()) {
         skipped++;
         continue;
       }
       
-      // יצירת שם קובץ ייחודי
-      const fileName = createUniqueFileName(senderName, subject, date, category);
+      // יצירת שם קובץ ייחודי וחכם
+      const fileName = createUniqueFileName(senderName, subject, date, category, senderEmail, attachmentName);
       
       // בדיקה אם הקובץ כבר קיים
       if (existingFiles.has(fileName)) {
@@ -135,17 +182,35 @@ function syncSheetToFolder(sheet, targetFolder, existingFiles, log) {
         continue;
       }
       
-      // ניסיון סנכרון הקובץ
+      // ניסיון סנכרון הקובץ - עם מדידת זמן
+      const fileStartTime = new Date();
       if (syncInvoiceFile(pdfLink, fileName, sheetFolder, log)) {
+        const fileEndTime = new Date();
+        const fileDuration = Math.round((fileEndTime - fileStartTime) / 1000);
+        
         synced++;
         existingFiles.add(fileName);
+        
+        // לוג מפורט לכל קובץ
+        _logMessage(log, `📤 קובץ ${synced}: ${fileName} - ${formatDuration(fileDuration)}`, 'SUCCESS');
+        
+        // הצגת התקדמות כל קובץ - טוסט קבוע
+        const progressBar = createProgressBar(synced, totalRows);
+        const elapsedTime = Math.round((new Date() - startTime) / 1000);
+        SpreadsheetApp.getActiveSpreadsheet().toast(
+          `📤 מסנכרן לדרייב... ${synced}/${totalRows} קבצים הועברו | ⏱️ ${formatDuration(elapsedTime)}\n${progressBar}`, 
+          "סנכרון פעיל", 10
+        );
       } else {
+        const fileEndTime = new Date();
+        const fileDuration = Math.round((fileEndTime - fileStartTime) / 1000);
+        _logMessage(log, `❌ שגיאה בקובץ: ${fileName} - ${formatDuration(fileDuration)}`, 'ERROR');
         errors++;
       }
       
     } catch (error) {
       errors++;
-      _logMessage(log, `❌ שגיאה בעיבוד שורה ${i + 1}: ${error.message}`, 'ERROR');
+      console.error(`שגיאה בשורה ${i + 1}: ${error.message}`);
     }
   }
   
@@ -202,10 +267,9 @@ function getOrCreateSubfolder(parentFolder, folderName) {
 /**
  * יצירת שם קובץ ייחודי
  */
-function createUniqueFileName(senderName, subject, date, category) {
-  // ניקוי שמות
-  const cleanSender = sanitizeFileName(senderName || 'Unknown').substring(0, 20);
-  const cleanSubject = sanitizeFileName(subject || 'No_Subject').substring(0, 30);
+function createUniqueFileName(senderName, subject, date, category, senderEmail, originalFileName) {
+  // חילוץ שם חברה חכם
+  const companyName = extractCompanyName(senderName, senderEmail, subject);
   
   // פורמט תאריך
   let dateStr = '';
@@ -217,11 +281,138 @@ function createUniqueFileName(senderName, subject, date, category) {
     dateStr = new Date().toISOString().split('T')[0];
   }
   
-  // קטגוריה
-  const categoryPrefix = category === '🔷 Local' ? 'IL' : 'INT';
+  // חילוץ מספר חשבונית מהנושא
+  const invoiceNumber = extractInvoiceNumber(subject);
   
-  // שם הקובץ הסופי
-  return `${categoryPrefix}_${dateStr}_${cleanSender}_${cleanSubject}.pdf`.replace(/_{2,}/g, '_');
+  // חילוץ סוג המסמך
+  const docType = extractDocumentType(subject);
+  
+  // בניית השם בפורמט יפה כמו שלך: תאריך - חברה - מספר - סוג
+  const parts = [
+    dateStr,
+    companyName,
+    invoiceNumber,
+    docType
+  ].filter(part => part && part.length > 0);
+  
+  return `${parts.join(' - ')}.pdf`;
+}
+
+/**
+ * חילוץ שם חברה חכם מהמידע הזמין
+ */
+function extractCompanyName(senderName, senderEmail, subject) {
+  // 1. חיפוש בנושא - מילות מפתח של חברות
+  const subjectCompanies = {
+    'כינרת': 'Kineret',
+    'גילת': 'Gilat', 
+    'טלפקום': 'Telecom',
+    'בזק': 'Bezeq',
+    'חברת חשמל': 'Electric',
+    'מי אביבים': 'Water',
+    'DigitalOcean': 'DigitalOcean',
+    'Google': 'Google',
+    'GoTo': 'GoTo'
+  };
+  
+  for (const [hebrew, english] of Object.entries(subjectCompanies)) {
+    if (subject && (subject.includes(hebrew) || subject.includes(english))) {
+      return english;
+    }
+  }
+  
+  // 2. חילוץ מכתובת מייל (החלק לפני @)
+  if (senderEmail && senderEmail.includes('@')) {
+    const domain = senderEmail.split('@')[1];
+    const domainParts = domain.split('.');
+    
+    // מיפוי דומיינים מוכרים
+    const domainMapping = {
+      'morning.co': 'Morning',
+      'gilat.net': 'Gilat',
+      'digitalocean.com': 'DigitalOcean',
+      'google.com': 'Google',
+      'gotoglobal.com': 'GoTo',
+      'finbox.co.il': 'Finbox',
+      'comax.co.il': 'Comax'
+    };
+    
+    if (domainMapping[domain]) {
+      return domainMapping[domain];
+    }
+    
+    // אם לא נמצא מיפוי מדויק, נסה לחלץ שם חברה מהדומיין
+    const mainDomain = domainParts[0];
+    
+    // ניקוי ושיפור שמות דומיין
+    const cleanDomain = mainDomain
+      .replace(/noreply|no-reply|donot|notify|support|info/gi, '') // הסרת מילים טכניות
+      .replace(/[^a-zA-Z]/g, '') // רק אותיות
+      .toLowerCase();
+    
+    if (cleanDomain.length >= 3) {
+      // הפיכה לאות ראשונה גדולה
+      return cleanDomain.charAt(0).toUpperCase() + cleanDomain.slice(1);
+    }
+    
+    // אם הכל נמחק, קח את הדומיין המקורי
+    return sanitizeFileName(mainDomain).substring(0, 10);
+  }
+  
+  // 3. נסיון מ-sender name
+  if (senderName && senderName !== 'Unknown') {
+    return sanitizeFileName(senderName).substring(0, 10);
+  }
+  
+  return 'Unknown';
+}
+
+/**
+ * חילוץ מספר חשבונית מהנושא
+ */
+function extractInvoiceNumber(subject) {
+  if (!subject) return '';
+  
+  // חיפוש מספרים בנושא (5-6 ספרות)
+  const numberMatch = subject.match(/\b\d{4,6}\b/);
+  if (numberMatch) {
+    return numberMatch[0];
+  }
+  
+  return '';
+}
+
+/**
+ * חילוץ סוג המסמך מהנושא
+ */
+function extractDocumentType(subject) {
+  if (!subject) return 'Document';
+  
+  const docTypes = {
+    'הוראה מתקנת': 'הוראה מתקנת',
+    'חשבונית חודשית': 'חשבונית חודשית', 
+    'חשבונית': 'חשבונית',
+    'קבלה': 'קבלה',
+    'receipt': 'Receipt',
+    'invoice': 'Invoice',
+    'Your invoice': 'Invoice',
+    'GoTo': 'GoTo Invoice'
+  };
+  
+  // חיפוש סוג המסמך
+  for (const [pattern, type] of Object.entries(docTypes)) {
+    if (subject.includes(pattern)) {
+      return type;
+    }
+  }
+  
+  // אם לא נמצא, נסה לקחת חלק מהנושא
+  const cleanSubject = subject.replace(/\d+/g, '').trim();
+  if (cleanSubject.length > 0) {
+    return sanitizeFileName(cleanSubject).substring(0, 15);
+  }
+  
+  return 'Document';
 }
 
 /**
@@ -233,20 +424,42 @@ function syncInvoiceFile(pdfLink, fileName, targetFolder, log) {
       return false;
     }
     
-    // בדיקה אם זה קישור Google Drive
+    // בדיקה אם זה קישור Google Drive - מהיר!
     if (pdfLink.includes('drive.google.com')) {
       try {
         // חילוץ מזהה הקובץ מהקישור
         const fileId = extractDriveFileId(pdfLink);
         if (fileId) {
-          // העתקת הקובץ מ-Drive
           const sourceFile = DriveApp.getFileById(fileId);
-          const copiedFile = sourceFile.makeCopy(fileName, targetFolder);
-          _logMessage(log, `✅ הועתק מ-Drive: ${fileName}`, 'SUCCESS');
+          
+          // שלב 1: קבלת רשימת תיקיות הורה לפני השינוי
+          const originalParents = [];
+          const parents = sourceFile.getParents();
+          while (parents.hasNext()) {
+            originalParents.push(parents.next());
+          }
+          
+          // שלב 2: הוספה לתיקייה החדשה
+          targetFolder.addFile(sourceFile);
+          
+          // שלב 3: הסרה רק מהתיקיות המקוריות (לא מהתיקייה החדשה)
+          for (const parent of originalParents) {
+            if (parent.getId() !== targetFolder.getId()) {
+              parent.removeFile(sourceFile);
+            }
+          }
+          
+          // שלב 4: שינוי שם לפורמט מאורגן
+          if (sourceFile.getName() !== fileName) {
+            sourceFile.setName(fileName);
+          }
+          
+          // שלב 5: לוג הצלחה (ללא אימות איטי)
+          _logMessage(log, `✅ קובץ הועבר: ${fileName}`, 'SUCCESS');
           return true;
         }
       } catch (driveError) {
-        _logMessage(log, `⚠️ שגיאה בהעתקה מ-Drive: ${driveError.message}`, 'WARNING');
+        console.error(`שגיאה בסנכרון: ${driveError.message}`);
       }
     }
     
@@ -284,6 +497,36 @@ function syncInvoiceFile(pdfLink, fileName, targetFolder, log) {
   } catch (error) {
     _logMessage(log, `❌ שגיאה בסנכרון קובץ ${fileName}: ${error.message}`, 'ERROR');
     return false;
+  }
+}
+
+/**
+ * יצירת progress bar ויזואלי לטוסט
+ */
+function createProgressBar(current, total, width = 20) {
+  const percentage = Math.round((current / total) * 100);
+  const filled = Math.round((current / total) * width);
+  const empty = width - filled;
+  
+  // רק בלוקים מלאים ורווחים - נקי וברור
+  const bar = '█'.repeat(filled) + ' '.repeat(empty);
+  return `|${bar}| ${percentage}%`;
+}
+
+/**
+ * המרת שניות לפורמט זמן קריא
+ */
+function formatDuration(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  } else if (minutes > 0) {
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  } else {
+    return `${secs}s`;
   }
 }
 
@@ -361,21 +604,25 @@ function checkSyncSettings() {
  * הצגת תוצאות הסנכרון
  */
 function showSyncResults(results) {
+  const timeInfo = results.durationSec ? `⏱️ זמן ביצוע: ${formatDuration(results.durationSec)}` : '';
+  
   const message = `✅ סנכרון הושלם!
 
+📋 גיליון: ${results.sheetName || 'לא זוהה'}
+${timeInfo}
+
 📊 תוצאות:
-• ${results.sheetsProcessed} גיליונות עובדו
 • ${results.totalProcessed} רשומות נבדקו
-• ${results.totalSynced} קבצים חדשים נוספו
+• ${results.totalSynced} קבצים הועברו
 • ${results.totalSkipped} קבצים דולגו (כבר קיימים)
 • ${results.totalErrors} שגיאות
 
-${results.totalSynced > 0 ? '🎉 הקבצים זמינים בתיקיית Google Drive!' : '⚠️ לא נוספו קבצים חדשים.'}`;
+${results.totalSynced > 0 ? '🎉 הקבצים הועברו לתיקיית Google Drive!' : '⚠️ לא הועברו קבצים חדשים.'}`;
 
   SpreadsheetApp.getUi().alert("סיכום סנכרון", message, SpreadsheetApp.getUi().ButtonSet.OK);
   
   SpreadsheetApp.getActiveSpreadsheet().toast(
-    `✅ סנכרון הושלם: ${results.totalSynced} נוספו, ${results.totalSkipped} דולגו`,
+    `✅ סנכרון ${results.sheetName}: ${results.totalSynced} הועברו (${formatDuration(results.durationSec)})`,
     "סנכרון הושלם", 10
   );
 }

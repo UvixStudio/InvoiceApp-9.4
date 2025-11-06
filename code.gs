@@ -35,7 +35,9 @@ function createMainMenu() {
     .addItem("📁 הגדרת תיקיית סינכרון (Google Drive)", "showExportFolderDialog")
     .addSeparator()
     .addItem("🚀 סריקת חשבוניות (Gmail API)", "processInvoices")
+    .addItem("🔄 סנכרן חשבוניות לתיקיית Drive", "syncInvoicesToDrive")
     .addSeparator()
+    .addItem("✅ הוסף שולחים מאושרים מהגיליון", "addApprovedSendersFromSheet")
     .addItem("  ניטרןו OCR - חילוץ סכומים", "performNitroOcr")
     .addSeparator()
     .addItem("🔎 אבחון מפורט (לוג יפה)", "diagnosticScan")
@@ -2520,5 +2522,141 @@ function getExportFolderId() {
   } catch (e) {
     _logMessage(`❌ שגיאה בקריאת Folder ID: ${e.message}`);
     return null;
+  }
+}
+/**
+ 
+* הוספת שולחים מאושרים מהגיליון הפעיל
+ */
+function addApprovedSendersFromSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const log = ss.getSheetByName(LOG_SHEET_NAME);
+  
+  try {
+    // בדיקה שיש גיליון Settings
+    const settings = ss.getSheetByName(SETTINGS_SHEET_NAME);
+    if (!settings) {
+      ui.alert("❌ גיליון Settings לא נמצא. אנא הפעל את הסריקה תחילה.");
+      return;
+    }
+    
+    // קבלת הגיליון הפעיל
+    const activeSheet = ss.getActiveSheet();
+    const sheetName = activeSheet.getName();
+    
+    // בדיקה שזה גיליון חשבוניות
+    if (!sheetName.match(/^invoices /i)) {
+      ui.alert(`❌ הגיליון הנוכחי "${sheetName}" אינו גיליון חשבוניות.\n\nאנא עבור לגיליון חשבוניות (invoices YYYY-MM-DD) ונסה שוב.`);
+      return;
+    }
+    
+    _logMessage(log, `🔍 מחפש שולחים מאושרים בגיליון: ${sheetName}`, 'INFO');
+    
+    // קבלת נתוני הגיליון
+    const data = activeSheet.getDataRange().getValues();
+    if (data.length <= 1) {
+      ui.alert("❌ הגיליון ריק או אין בו נתונים.");
+      return;
+    }
+    
+    const headers = data[0];
+    const actionIndex = headers.indexOf("Action");
+    const senderEmailIndex = headers.indexOf("Sender Email");
+    
+    if (actionIndex === -1 || senderEmailIndex === -1) {
+      ui.alert("❌ לא נמצאו עמודות Action או Sender Email בגיליון.");
+      return;
+    }
+    
+    // בדיקה אם יש שורות מסומנות
+    let selectedRows = [];
+    let allEmails = [];
+    
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const isChecked = row[actionIndex] === true;
+      const senderEmail = row[senderEmailIndex];
+      
+      if (senderEmail && senderEmail.trim()) {
+        allEmails.push(senderEmail.trim());
+        
+        if (isChecked) {
+          selectedRows.push(senderEmail.trim());
+        }
+      }
+    }
+    
+    // קביעת איזה מיילים להוסיף
+    let emailsToAdd = [];
+    let message = "";
+    
+    if (selectedRows.length > 0) {
+      // יש שורות מסומנות - קח רק אותן
+      emailsToAdd = [...new Set(selectedRows)]; // הסרת כפילויות
+      message = `נמצאו ${selectedRows.length} שורות מסומנות.\n\nהאם להוסיף ${emailsToAdd.length} שולחים מאושרים לרשימה?`;
+    } else {
+      // אין שורות מסומנות - קח את כולם
+      emailsToAdd = [...new Set(allEmails)]; // הסרת כפילויות
+      message = `לא נמצאו שורות מסומנות.\n\nהאם להוסיף את כל ${emailsToAdd.length} השולחים מהגיליון לרשימת המאושרים?`;
+    }
+    
+    if (emailsToAdd.length === 0) {
+      ui.alert("❌ לא נמצאו כתובות מייל תקינות להוספה.");
+      return;
+    }
+    
+    // אישור מהמשתמש
+    const response = ui.alert(
+      "✅ הוספת שולחים מאושרים",
+      message + "\n\nזה יזרז את הסריקות העתידיות!",
+      ui.ButtonSet.YES_NO
+    );
+    
+    if (response !== ui.Button.YES) {
+      _logMessage(log, "❌ המשתמש ביטל את הוספת השולחים המאושרים", 'INFO');
+      return;
+    }
+    
+    // קבלת הרשימה הקיימת מעמודה G (כל השורות)
+    const lastRow = settings.getLastRow();
+    let currentList = [];
+    
+    // קריאת כל המיילים הקיימים מעמודה G (החל משורה 2)
+    if (lastRow >= 2) {
+      const existingData = settings.getRange(2, 7, lastRow - 1, 1).getValues(); // עמודה G = 7
+      currentList = existingData.flat().filter(email => email && email.toString().trim().length > 0);
+    }
+    
+    // הוספת המיילים החדשים והסרת כפילויות
+    const combinedList = [...new Set([...currentList, ...emailsToAdd])];
+    
+    // ניקוי עמודה G (מחיקת הנתונים הישנים)
+    if (lastRow >= 2) {
+      settings.getRange(2, 7, lastRow - 1, 1).clearContent();
+    }
+    
+    // כתיבת כל המיילים בשורות נפרדות בעמודה G
+    if (combinedList.length > 0) {
+      const emailsArray = combinedList.map(email => [email.toString().trim()]);
+      settings.getRange(2, 7, emailsArray.length, 1).setValues(emailsArray);
+    }
+    
+    const addedCount = combinedList.length - currentList.length;
+    
+    _logMessage(log, `✅ נוספו ${addedCount} שולחים מאושרים חדשים (סה"כ: ${combinedList.length})`, 'SUCCESS');
+    
+    // הודעת הצלחה
+    ui.alert(
+      "✅ שולחים מאושרים נוספו!",
+      `נוספו ${addedCount} שולחים חדשים לרשימת המאושרים.\n\n` +
+      `סה"כ שולחים מאושרים: ${combinedList.length}\n\n` +
+      `🚀 הסריקות הבאות יהיו מהירות יותר!`,
+      ui.ButtonSet.OK
+    );
+    
+  } catch (error) {
+    _logMessage(log, `❌ שגיאה בהוספת שולחים מאושרים: ${error.message}`, 'ERROR');
+    ui.alert(`❌ שגיאה: ${error.message}`);
   }
 }
