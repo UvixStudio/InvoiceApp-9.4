@@ -416,36 +416,48 @@ function processEmails(emails, config, sheet, log, startTime) {
   // ✅ V32: הפניה ל-Mini-Log
   const statusSheet = sheet;
   
-  // ⚡ V32 FIXED: Batch Write אמיתי - כתיבה אחת בסוף!
+  // ⚡ ULTRA OPTIMIZED: פעולה אחת מאוחדת + לוג מלא Batch!
+  const errorLog = [];
+  const infoLog = [];  // ← לוג מלא של כל מייל
+  
   for (let i = 0; i < emails.length; i++) {
     const emailData = emails[i];
     
+    // בדיקת כפילות מהירה
+    if (existingRecords.has(emailData.messageId)) {
+      duplicates++;
+      continue;
+    }
+    
+    // פעולה מאוחדת אחת
     try {
-      // בדיקת כפילויות
-      if (existingRecords.has(emailData.messageId)) {
-        duplicates++;
-        continue;
-      }
+      allRecords.push(createInvoiceRecord(emailData, config));
+      existingRecords.set(emailData.messageId, true);
+      inserted++;
       
-      // יצירת רשומה ודחיפה למערך
-      try {
-        const record = createInvoiceRecord(emailData, config);
-        allRecords.push(record);  // ← רק דוחף למערך, לא כותב!
-        
-        existingRecords.set(emailData.messageId, true);
-        inserted++;
-        
-        // לוג בגיליון Log (לא Mini-Log!)
-        _logMessage(log, `✅ מתקבל: ${emailData.email} - "${emailData.subject}"`, 'SUCCESS');
-      } catch (recordError) {
-        _logMessage(log, `❌ שגיאה ביצירת רשומה: ${emailData.email} - ${recordError.message}`, 'ERROR');
-        skipped++;
+      // שמירת לוג למערך (לא כתיבה!)
+      infoLog.push(`✅ מתקבל: ${emailData.email} - "${emailData.subject}"`);
+      
+      // עדכון Mini-Log כל 5 מיילים + Progress
+      if (i % 5 === 0 || i === emails.length - 1) {
+        const senderName = emailData.senderName || emailData.email.split('@')[0];
+        const shortSubject = emailData.subject.substring(0, 25);
+        statusSheet.getRange("F5").setValue(`${i + 1} מתוך ${emails.length}`);
+        statusSheet.getRange("F6").setValue(`${senderName} - ${shortSubject}...`);
       }
       
     } catch (error) {
-      _logMessage(log, `❌ שגיאה בעיבוד מייל ${emailData.email}: ${error.message}`, 'ERROR');
       skipped++;
+      errorLog.push(`${emailData.email}: ${error.message}`);
     }
+  }
+  
+  // ✅ כתיבה אחת של כל הלוגים!
+  if (infoLog.length > 0) {
+    _logMessage(log, infoLog.join('\n'), 'SUCCESS');
+  }
+  if (errorLog.length > 0) {
+    _logMessage(log, `⚠️ ${errorLog.length} שגיאות בעיבוד:\n${errorLog.join('\n')}`, 'WARNING');
   }
   
   // ⚡ כתיבה אחת של כל הרשומות!
@@ -1377,5 +1389,178 @@ function prepareDownloadLinksForSelected() {
   } catch (error) {
     _logMessage(log, `❌ שגיאה בהכנת לינקי הורדה: ${error.message}`, 'ERROR');
     SpreadsheetApp.getUi().alert(`❌ שגיאה: ${error.message}`);
+  }
+}
+
+// === ZIP DOWNLOAD FUNCTION ===
+/**
+ * ⚡ V32D: הורדת כל קבצי PDF כ-ZIP + שמירת לינק במיני-לוג
+ * יוצר ZIP מכל השורות (לא רק מסומנות!) ושומר לינק הורדה ב-Mini-Log
+ */
+function downloadAsZip() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const activeSheet = ss.getActiveSheet();
+  const log = ss.getSheetByName(LOG_SHEET_NAME);
+  
+  // בדיקה שזה גיליון invoices
+  if (!/^invoices /i.test(activeSheet.getName())) {
+    SpreadsheetApp.getUi().alert("❌ אנא עבור לגיליון 'invoices' המתאים.");
+    return;
+  }
+  
+  _logMessage(log, "📦 התחלת יצירת ZIP להורדה", 'INFO');
+  
+  try {
+    // ✅ עדכון Mini-Log - התחלה
+    activeSheet.getRange("E6").setValue("📦 ZIP File");
+    activeSheet.getRange("F6").setValue("מכין ZIP...");
+    SpreadsheetApp.flush();
+    
+    // קריאת כל הנתונים
+    const dataRange = activeSheet.getDataRange();
+    const data = dataRange.getValues();
+    const headers = data[12];  // שורה 13 = אינדקס 12
+    
+    // מציאת אינדקסים
+    const emailIdColIdx = headers.indexOf("Email ID");
+    const senderNameColIdx = headers.indexOf("Sender Name");
+    const senderEmailColIdx = headers.indexOf("Sender Email");
+    const dateColIdx = headers.indexOf("Date");
+    const subjectColIdx = headers.indexOf("Subject");
+    const attachmentNameColIdx = headers.indexOf("Attachment Name");
+    
+    if (emailIdColIdx === -1) {
+      SpreadsheetApp.getUi().alert("❌ לא נמצאה עמודת Email ID");
+      return;
+    }
+    
+    // ✅ איסוף כל השורות עם נתונים (לא רק מסומנות!)
+    const allRows = [];
+    for (let i = 13; i < data.length; i++) {  // מתחיל מ-14
+      if (data[i][emailIdColIdx]) {
+        allRows.push({
+          messageId: data[i][emailIdColIdx],
+          senderName: data[i][senderNameColIdx] || 'Unknown',
+          senderEmail: data[i][senderEmailColIdx] || '',
+          date: data[i][dateColIdx] || new Date(),
+          subject: data[i][subjectColIdx] || 'No Subject',
+          attachmentName: data[i][attachmentNameColIdx] || ''
+        });
+      }
+    }
+    
+    if (allRows.length === 0) {
+      SpreadsheetApp.getUi().alert("❌ אין חשבוניות להורדה בגיליון זה.");
+      activeSheet.getRange("F6").setValue("❌ אין נתונים");
+      return;
+    }
+    
+    _logMessage(log, `📦 יוצר ZIP עם ${allRows.length} קבצים`, 'INFO');
+    
+    // יצירת ZIP
+    const zipBlobs = [];
+    let successCount = 0;
+    let errorCount = 0;
+    
+    for (let i = 0; i < allRows.length; i++) {
+      const row = allRows[i];
+      
+      try {
+        const message = GmailApp.getMessageById(row.messageId);
+        if (!message) {
+          errorCount++;
+          continue;
+        }
+        
+        // חיפוש PDF
+        const attachments = message.getAttachments();
+        const pdfAttachment = attachments.find(att => 
+          att.getName().toLowerCase().endsWith('.pdf') || 
+          att.getContentType().toLowerCase().includes('pdf')
+        );
+        
+        if (pdfAttachment) {
+          // ✅ V32D: שם קובץ חכם ומובנה
+          const smartFileName = buildSmartFileName(
+            row.messageId,
+            row.date,
+            row.senderEmail,
+            row.senderName,
+            row.subject,
+            row.attachmentName
+          );
+          
+          const blob = pdfAttachment.copyBlob();
+          blob.setName(smartFileName);
+          zipBlobs.push(blob);
+          successCount++;
+        } else {
+          errorCount++;
+        }
+        
+        // עדכון Progress כל 5 קבצים
+        if (i % 5 === 0 || i === allRows.length - 1) {
+          const progress = Math.round(((i + 1) / allRows.length) * 100);
+          activeSheet.getRange("F6").setValue(`📦 מכין ZIP: ${i + 1}/${allRows.length} (${progress}%)`);
+          SpreadsheetApp.flush();
+        }
+        
+      } catch (error) {
+        errorCount++;
+        console.error(`Error processing ${row.messageId}: ${error.message}`);
+      }
+    }
+    
+    if (zipBlobs.length === 0) {
+      SpreadsheetApp.getUi().alert("❌ לא נמצאו קבצי PDF להורדה");
+      activeSheet.getRange("F6").setValue("❌ אין PDF");
+      return;
+    }
+    
+    // יצירת ZIP עם שם מתאים
+    const dateStr = new Date().toISOString().split('T')[0];
+    const sheetName = activeSheet.getName().replace('invoices ', '');
+    const zipFileName = `invoices_${sheetName}_${dateStr}.zip`;
+    const zipBlob = Utilities.zip(zipBlobs, zipFileName);
+    
+    // שמירה ב-Drive
+    const tempFile = DriveApp.createFile(zipBlob);
+    tempFile.setDescription(`ZIP של חשבוניות מגיליון: ${activeSheet.getName()}`);
+    
+    // ✅ שיתוף הקובץ כציבורי (anyone with the link)
+    tempFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    
+    // ✅ יצירת לינק להורדה (שני פורמטים - view ו-download)
+    const fileId = tempFile.getId();
+    const viewUrl = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+    const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    
+    // ✅ שמירת הלינק במיני-לוג!
+    activeSheet.getRange("F6").setValue(viewUrl);
+    SpreadsheetApp.flush();
+    
+    // הצגת תוצאות
+    const message = `✅ ZIP נוצר בהצלחה!
+
+📊 תוצאות:
+• ${successCount} קבצים נוספו ל-ZIP
+• ${errorCount} קבצים נכשלו
+
+📥 הלינק נשמר במיני-לוג (תא F6)
+לחץ על הלינק → לחץ על ⬇️ (Download) בפינה הימנית העליונה
+
+💡 שם הקובץ: ${zipFileName}
+📁 הקובץ נשמר ב-My Drive שלך
+
+💡 שם הקובץ: ${zipFileName}`;
+
+    SpreadsheetApp.getUi().alert("ZIP מוכן להורדה", message, SpreadsheetApp.getUi().ButtonSet.OK);
+    
+    _logMessage(log, `✅ ZIP נוצר: ${successCount} קבצים, ${errorCount} שגיאות. לינק: ${viewUrl}`, 'SUCCESS');
+    
+  } catch (error) {
+    _logMessage(log, `❌ שגיאה ביצירת ZIP: ${error.message}`, 'ERROR');
+    activeSheet.getRange("F6").setValue("❌ שגיאה");
+    SpreadsheetApp.getUi().alert(`❌ שגיאה ביצירת ZIP: ${error.message}`);
   }
 }

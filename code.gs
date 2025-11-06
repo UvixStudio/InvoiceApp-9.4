@@ -59,7 +59,7 @@ function createActionsMenu() {
     .addItem("🚫 החרג נבחרים", "excludeSelected")
     .addSeparator()
     .addItem("📦 הכן קבצים להורדה", "prepareDownloadLinksForSelected")  // V32C - נבחרים או הכל
-    // .addItem("📦 הורד כ-ZIP", "downloadAsZip")  // ✅ V32 FIX: מושבת זמנית - הפונקציה לא קיימת
+    .addItem("📦 הורד הכל כ-ZIP", "downloadAsZip")  // ✅ V32D: יוצר ZIP מכל השורות + לינק במיני-לוג!
     .addItem("🗑️ מחק נבחרים", "deleteSelected")
     .addSeparator()
     .addItem("✅ הוסף נבחרים למאושרים", "approveSelected")
