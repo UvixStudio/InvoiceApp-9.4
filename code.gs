@@ -60,6 +60,7 @@ function createActionsMenu() {
     .addItem("🔷 סמן כמקומי", "markAsLocal")
     .addItem("🌐 סמן כבינלאומי", "markAsInternational")
     .addSeparator()
+    .addItem("📦 הכן קבצים להורדה (נבחרים)", "prepareDownloadLinksForSelected")  // V32C
     .addItem("📦 יצא נבחרים", "exportSelected")
     .addItem("🗑️ מחק נבחרים", "deleteSelected")
     .addSeparator()
