@@ -19,23 +19,46 @@ function buildSmartFileName(messageId, dateStr, senderEmail, senderName, subject
     // 4. תיאור קצר
     const description = extractDescription(subject, originalFileName);
     
-    // 5. בניית השם
-    let fileName = `${formattedDate}_${companyName}`;
+    // 5. בניית השם - רק אם יש ערכים תקינים
+    let fileName = formattedDate;
     
-    if (invoiceNumber) {
+    // הוסף שם חברה רק אם הוא לא ריק ולא "Unknown"
+    if (companyName && companyName !== 'Unknown' && companyName.length >= 2) {
+      fileName += `_${companyName}`;
+    }
+    
+    // הוסף מספר חשבונית רק אם קיים
+    if (invoiceNumber && invoiceNumber.length >= 3) {
       fileName += `_${invoiceNumber}`;
     }
     
-    if (description) {
+    // הוסף תיאור רק אם קיים
+    if (description && description.length >= 2) {
       fileName += `_${description}`;
     }
     
     fileName += '.pdf';
     
-    // 6. ניקוי תווים לא חוקיים
+    // 6. אם השם הוא רק תאריך (לא מצאנו כלום), הוסף את שם הקובץ המקורי
+    if (fileName === `${formattedDate}.pdf` && originalFileName) {
+      // נסה לחלץ משהו משם הקובץ המקורי
+      const cleanOriginal = originalFileName
+        .replace(/\.pdf$/i, '')
+        .replace(/[^a-zA-Z0-9א-ת]/g, '_')
+        .substring(0, 30);
+      
+      if (cleanOriginal && cleanOriginal.length >= 3) {
+        fileName = `${formattedDate}_${cleanOriginal}.pdf`;
+      } else {
+        // fallback אחרון - השתמש ב-messageId
+        fileName = `${formattedDate}_invoice_${messageId.substring(0, 8)}.pdf`;
+      }
+    }
+    
+    // 7. ניקוי תווים לא חוקיים
     fileName = sanitizeFileName(fileName);
     
-    // 7. הגבלת אורך (מקסימום 100 תווים)
+    // 8. הגבלת אורך (מקסימום 100 תווים)
     if (fileName.length > 100) {
       const ext = '.pdf';
       fileName = fileName.substring(0, 100 - ext.length) + ext;
@@ -222,16 +245,23 @@ function extractCompanyFromDomain(email) {
   const mainDomain = domainParts[0];
   
   // ניקוי
-  const cleaned = mainDomain
-    .replace(/noreply|no-reply|notify|support|info/gi, '')
+  let cleaned = mainDomain
+    .replace(/noreply|no-reply|notify|support|info|web|customer|mail|post/gi, '')
     .replace(/[^a-zA-Z]/g, '')
     .toLowerCase();
   
+  // אם אחרי הניקוי נשאר משהו
   if (cleaned.length >= 3) {
     return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
   }
   
-  return 'Unknown';
+  // אם הניקוי הסיר הכל, קח את הדומיין המלא (לפני הנקודה הראשונה)
+  if (mainDomain.length >= 3) {
+    return mainDomain.charAt(0).toUpperCase() + mainDomain.slice(1).toLowerCase();
+  }
+  
+  // fallback אחרון - אל תחזיר "Unknown", תחזיר null
+  return null;
 }
 
 /**
