@@ -80,22 +80,30 @@ function processInvoices() {
     const statusRange = statusSheet.getRange("F1:G11");
     statusRange.clearContent();
 
-    // ✅ V32: כותרות Mini-Log
-    statusSheet.getRange("F1").setValue("status");
-    statusSheet.getRange("G1").setValue("שאילתה");
-
-    // בניית שאילתה
-    const query = buildGmailQuery(config);
+    // ✅ V32: כותרות Mini-Log + צבעי רקע
+    statusSheet.getRange("E1").setValue("google serach").setBackground("#ffe599");
+    statusSheet.getRange("F1").setValue(buildGmailQuery(config));
     
-    // ✅ V32: שאילתה ב-Mini-Log
-    statusSheet.getRange("G2").setValue(query);
+    statusSheet.getRange("E2").setValue("Start time").setBackground("#cfe2f3");
+    statusSheet.getRange("F2").setValue(`⏱️${startTime.toLocaleTimeString()}`).setBackground("#ffffff");
     
-    // ✅ V32: זמן התחלה ב-Mini-Log
-    statusSheet.getRange("F3").setValue(`זמן התחלה: ${startTime.toLocaleTimeString()}`);
+    statusSheet.getRange("E3").setValue("End Time").setBackground("#cfe2f3");
+    statusSheet.getRange("F3").setValue("").setBackground("#ffffff"); // יעודכן בסוף
     
-    // ✅ V32: מצב ראשוני
-    statusSheet.getRange("F6").setValue("מתחיל סריקה...");
-    statusSheet.getRange("F7").setValue("0 % |                    |");
+    statusSheet.getRange("E4").setValue("Fetched mails").setBackground("#ffe599");
+    statusSheet.getRange("F4").setValue("").setBackground("#ffffff"); // יעודכן אחרי הסריקה
+    
+    statusSheet.getRange("E5").setValue("Progress").setBackground("#ffe599");
+    statusSheet.getRange("F5").setValue("0 % |                    |").setBackground("#ffffff");
+    
+    statusSheet.getRange("E6").setValue("Log Update").setBackground("#ffe599");
+    statusSheet.getRange("F6").setValue("מתחיל סריקה...").setBackground("#cfe2f3");
+    
+    statusSheet.getRange("E7").setValue("final result").setBackground("#ffe599");
+    statusSheet.getRange("F7").setValue("").setBackground("#d9ead3"); // ירוק - יעודכן בסוף
+    
+    statusSheet.getRange("E8").setValue("📦 ZIP File").setBackground("#ead1dc");
+    statusSheet.getRange("F8").setValue("").setBackground("#ffffff");
     
     _logMessage(log, `⏱️ התחלת סריקה: ${startTime.toLocaleTimeString()}`, 'INFO');
     
@@ -105,7 +113,7 @@ function processInvoices() {
     _logMessage(log, `⏱️ סיום סריקת Gmail: ${scanEndTime.toLocaleTimeString()} - ${formatScanDuration(scanDuration)}`, 'INFO');
     
     // ✅ V32: עדכון Mini-Log - נמצאו מיילים
-    statusSheet.getRange("F5").setValue(`נמצאו ${scanResults.emails.length} מיילים בסינון הראשוני`);
+    statusSheet.getRange("F4").setValue(scanResults.emails.length);
     
     if (scanResults.emails.length === 0) {
       statusSheet.getRange("F6").setValue("ℹ️ לא נמצאו מיילים");
@@ -442,8 +450,9 @@ function processEmails(emails, config, sheet, log, startTime) {
       if (i % 5 === 0 || i === emails.length - 1) {
         const senderName = emailData.senderName || emailData.email.split('@')[0];
         const shortSubject = emailData.subject.substring(0, 25);
-        statusSheet.getRange("F5").setValue(`${i + 1} מתוך ${emails.length}`);
-        statusSheet.getRange("F6").setValue(`${senderName} - ${shortSubject}...`);
+        const progressBar = createScanProgressBar(i + 1, emails.length);
+        statusSheet.getRange("F5").setValue(`${progressBar}    |     סורק ${i + 1} מתוך ${emails.length}`);
+        statusSheet.getRange("F6").setValue(`✅ מתקבל: ${senderName} - "${shortSubject}..."`).setBackground("#cfe2f3");
       }
       
     } catch (error) {
@@ -726,6 +735,20 @@ ${results.inserted > 0 ? '🎉 החשבוניות זמינות בגיליון ה
 💡 עכשיו אפשר:
 1. לצפייה/הורדה ישירה → לחץ על Download Link
 2. לסנכרון ל-Drive → תפריט "פעולות" → "הכן קבצים להורדה"`;
+
+  // ✅ V32: עדכון Mini-Log עם סיכום סופי
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const activeSheet = ss.getActiveSheet();
+  const endTime = new Date();
+  
+  // עדכון End Time
+  activeSheet.getRange("F3").setValue(`⏱️${endTime.toLocaleTimeString()}`);
+  
+  // עדכון final result עם רקע ירוק
+  const finalResultText = `✅ הסריקה הושלמה!  📊 תוצאות: • ${results.inserted} חשבוניות חדשות נוספו • ${results.skipped} מיילים דולגו • ${results.duplicates} כפילויות נמצאו • ${results.total} מיילים נבדקו בסך הכל  🎉 החשבוניות זמינות בגיליון החדש!`;
+  activeSheet.getRange("F7").setValue(finalResultText).setBackground("#d9ead3").setWrap(true);
+  
+  SpreadsheetApp.flush();
 
   SpreadsheetApp.getUi().alert("סיכום סריקה", message, SpreadsheetApp.getUi().ButtonSet.OK);
   
